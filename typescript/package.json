@@ -19,7 +19,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@kafkajs/confluent-schema-registry": "3.9.0",
+    "@kafkajs/confluent-schema-registry": "4.1.0",
     "@runorca/orca-sdk": "0.2.3",
     "dotenv": "18.0.4",
     "kafkajs": "2.2.4",

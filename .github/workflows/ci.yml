@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -r python/requirements-dev.txt
+      - run: pytest
+        working-directory: python
+      - run: python doctor.py --offline
+        working-directory: python
+
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: typescript
+      - run: npm test
+        working-directory: typescript
+      - run: npm run typecheck
+        working-directory: typescript
+
+  cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck cli/*.sh cli/tests/*.sh cli/tests/fake-ork
+      - run: cli/tests/run.sh
+
+  no-credentials:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if a credential was committed
+        run: |
+          if git grep -nIE 'eyJhbGciOi|BEGIN [A-Z ]*PRIVATE KEY|xox[abpr]-[0-9]' -- ':!.github'; then
+            echo "A credential-like string is committed above. Remove it and rotate the key."
+            exit 1
+          fi

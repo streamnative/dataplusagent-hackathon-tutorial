@@ -1,0 +1,22 @@
+# Secrets: your team card lives here. Never commit it.
+.env
+.env.*
+!.env.example
+
+# Local state (agent/environment/vault ids per participant)
+.orca-state/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# TypeScript
+node_modules/
+dist/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/

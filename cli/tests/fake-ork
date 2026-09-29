@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+# A stand-in for `ork` in the CLI tests. It records every call (one JSON array
+# per line in $FAKE_ORK_DIR/calls.log) and answers from files in $FAKE_ORK_DIR,
+# printing what the real CLI prints: resource JSON for -o json, errors as
+# "Error: ... returned status <code>: ...", and stream lines as
+# {"data": <event>, "event": <type>, "id": "<frame>"}.
+#
+# Only flags the real ork accepts for each command are recognised; anything
+# else fails, so the scripts cannot drift from the real CLI.
+#
+# Scenario files:
+#   reactions/<n>.ndjson   events the agent emits after the n-th send (message or tool confirmation)
+#   history.ndjson         events already in every new session's transcript (an earlier turn)
+# Switches: FAKE_ORK_BARE=1 (stream lines without the SSE wrapper), FAKE_ORK_NO_ECHO=1
+# (sent events are not echoed), FAKE_ORK_TAKEN_ENVS="name ..." (409 on create),
+# FAKE_ORK_FAIL="<command words>:<status>" (fail that command).
+set -euo pipefail
+
+dir=${FAKE_ORK_DIR:?FAKE_ORK_DIR is not set}
+mkdir -p "$dir/agents" "$dir/envs" "$dir/vaults" "$dir/creds" "$dir/sessions" "$dir/reactions"
+jq -cn '$ARGS.positional' --args -- "$@" >>"$dir/calls.log"
+
+fail() {  # fail <status> <method> <path>
+  printf 'Error: failed: %s http://fake.invalid%s returned status %s: {"type":"error","error":{"type":"error","message":"fake %s"}}\n' \
+    "$2" "$3" "$1" "$1" >&2
+  exit 1
+}
+
+counter() {  # counter <name>  -> next value
+  local file="$dir/$1.count" n=0
+  [ -f "$file" ] && n=$(cat "$file")
+  n=$((n + 1))
+  echo "$n" >"$file"
+  echo "$n"
+}
+
+now() {
+  local n
+  n=$(counter clock)
+  printf '2026-10-07T10:%02d:%02d.000Z' $((n / 60)) $((n % 60))
+}
+
+words=()
+name="" model="" system="" version="" display="" auth="" vault="" agent="" agent_version="" env="" title=""
+session="" text="" tool_use="" decision="" deny="" cursor="" timeout=""
+mcp=() tools=() metadata=() vault_ids=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --name) name=$2 ;;
+    --model) model=$2 ;;
+    --system) system=$2 ;;
+    --version) version=$2 ;;
+    --mcp-server) mcp+=("$2") ;;
+    --tool-json) tools+=("$2") ;;
+    --metadata) metadata+=("$2") ;;
+    --display-name) display=$2 ;;
+    --auth-json) auth=$2 ;;
+    --vault) vault=$2 ;;
+    --agent) agent=$2 ;;
+    --agent-version) agent_version=$2 ;;
+    --environment-id) env=$2 ;;
+    --vault-id) vault_ids+=("$2") ;;
+    --title) title=$2 ;;
+    --session) session=$2 ;;
+    --text) text=$2 ;;
+    --tool-use-id) tool_use=$2 ;;
+    --decision) decision=$2 ;;
+    --deny-message) deny=$2 ;;
+    --from-cursor) cursor=$2 ;;
+    --timeout) timeout=$2 ;;
+    -o) [ "$2" = json ] || { echo "fake-ork: only -o json is scripted" >&2; exit 2; } ;;
+    -*) echo "fake-ork: unknown flag $1" >&2; exit 2 ;;
+    *) words+=("$1"); shift; continue ;;
+  esac
+  shift 2
+done
+
+command="${words[*]}"
+if [ -n "${FAKE_ORK_FAIL:-}" ] && [ "${command#"${FAKE_ORK_FAIL%:*}"}" != "$command" ]; then
+  fail "${FAKE_ORK_FAIL##*:}" POST "/v1/fake"
+fi
+
+list_json() { jq -cn '$ARGS.positional' --args -- "$@"; }
+
+# Mirrors ork's flag parsing: name=...,type=...,url=... for MCP servers.
+mcp_json() {
+  jq -cn '$ARGS.positional | map(split(",") | map(capture("^(?<k>[^=]+)=(?<v>.*)$") | {(.k): .v}) | add)' \
+    --args -- ${mcp[@]+"${mcp[@]}"}
+}
+tools_json() { jq -cn '$ARGS.positional | map(fromjson)' --args -- ${tools[@]+"${tools[@]}"}; }
+metadata_json() {
+  jq -cn '$ARGS.positional | map(capture("^(?<k>[^=]+)=(?<v>.*)$") | {(.k): .v}) | add // {}' \
+    --args -- ${metadata[@]+"${metadata[@]}"}
+}
+
+append_event() {  # append_event <session> <event json>
+  local frame line
+  frame=$(counter "frame-$1")
+  line=$(jq -c --arg now "$(now)" 'if has("processed_at") then . else .processed_at = $now end' <<<"$2")
+  if [ -n "${FAKE_ORK_BARE:-}" ]; then
+    printf '%s\n' "$line" >>"$dir/sessions/$1.ndjson"
+  else
+    jq -c --arg frame "$frame" '{data: ., event: .type, id: $frame}' <<<"$line" >>"$dir/sessions/$1.ndjson"
+  fi
+}
+
+record_send() {  # record_send <session> <user event json>  -> prints the persisted event list
+  local event reaction line
+  event=$(jq -c --arg id "evt_user_$(counter user)" --arg now "$(now)" '. + {id: $id, processed_at: $now}' <<<"$2")
+  [ -n "${FAKE_ORK_NO_ECHO:-}" ] || append_event "$1" "$event"
+  reaction="$dir/reactions/$(counter sends).ndjson"
+  if [ -f "$reaction" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ -n "$line" ] && append_event "$1" "$line"
+    done <"$reaction"
+  fi
+  jq -n --argjson event "$event" '{data: [$event]}'
+}
+
+case "$command" in
+  "agent create")
+    n=$(counter agent)
+    jq -n --arg id "agent_$n" --arg name "$name" --arg model "$model" --arg system "$system" \
+      --argjson mcp "$(mcp_json)" --argjson tools "$(tools_json)" --argjson metadata "$(metadata_json)" \
+      '{id: $id, type: "agent", name: $name, model: $model, system: $system, mcp_servers: $mcp, tools: $tools,
+        metadata: $metadata, version: 1, archived_at: null}' | tee "$dir/agents/agent_$n.json"
+    ;;
+  "agent get "*)
+    file="$dir/agents/${words[2]}.json"
+    [ -f "$file" ] || fail 404 GET "/v1/agents/${words[2]}"
+    cat "$file"
+    ;;
+  "agent update "*)
+    file="$dir/agents/${words[2]}.json"
+    [ -f "$file" ] || fail 404 POST "/v1/agents/${words[2]}"
+    [ -z "$version" ] || [ "$version" = "$(jq -r .version "$file")" ] || fail 409 POST "/v1/agents/${words[2]}"
+    # Like the real ork, only flags you pass are sent, and tools/mcp_servers only when non-empty.
+    jq --arg name "$name" --arg model "$model" --arg system "$system" \
+      --argjson mcp "$(mcp_json)" --argjson tools "$(tools_json)" --argjson metadata "$(metadata_json)" '
+      (if $name != "" then .name = $name else . end)
+      | (if $model != "" then .model = $model else . end)
+      | (if $system != "" then .system = $system else . end)
+      | (if ($mcp | length) > 0 then .mcp_servers = $mcp else . end)
+      | (if ($tools | length) > 0 then .tools = $tools else . end)
+      | .metadata += $metadata | .version += 1' "$file" >"$file.tmp"
+    mv "$file.tmp" "$file"
+    cat "$file"
+    ;;
+  "agent archive "*)
+    file="$dir/agents/${words[2]}.json"
+    [ -f "$file" ] || fail 404 POST "/v1/agents/${words[2]}/archive"
+    jq '.archived_at = "2026-10-07T11:00:00Z"' "$file" >"$file.tmp" && mv "$file.tmp" "$file"
+    echo "archived ${words[2]}"
+    ;;
+  "agent environments create")
+    for taken in ${FAKE_ORK_TAKEN_ENVS:-}; do
+      [ "$taken" != "$name" ] || fail 409 POST /v1/environments
+    done
+    n=$(counter env)
+    jq -n --arg id "env_$n" --arg name "$name" '{id: $id, type: "environment", name: $name, archived_at: null}' |
+      tee "$dir/envs/env_$n.json"
+    ;;
+  "agent environments get "*)
+    [ -f "$dir/envs/${words[3]}.json" ] || fail 404 GET "/v1/environments/${words[3]}"
+    cat "$dir/envs/${words[3]}.json"
+    ;;
+  "agent environments delete "*)
+    [ -f "$dir/envs/${words[3]}.json" ] || fail 404 DELETE "/v1/environments/${words[3]}"
+    rm "$dir/envs/${words[3]}.json"
+    echo "deleted ${words[3]}"
+    ;;
+  "agent vaults create")
+    n=$(counter vault)
+    jq -n --arg id "vlt_$n" --arg name "$display" '{id: $id, type: "vault", display_name: $name, archived_at: null}' |
+      tee "$dir/vaults/vlt_$n.json"
+    ;;
+  "agent vaults get "*)
+    [ -f "$dir/vaults/${words[3]}.json" ] || fail 404 GET "/v1/vaults/${words[3]}"
+    cat "$dir/vaults/${words[3]}.json"
+    ;;
+  "agent vaults delete "*)
+    [ -f "$dir/vaults/${words[3]}.json" ] || fail 404 DELETE "/v1/vaults/${words[3]}"
+    rm "$dir/vaults/${words[3]}.json"
+    echo "deleted ${words[3]}"
+    ;;
+  "agent vaults credentials list")
+    [ -f "$dir/creds/$vault.json" ] || echo '[]' >"$dir/creds/$vault.json"
+    jq '{data: .}' "$dir/creds/$vault.json"
+    ;;
+  "agent vaults credentials create")
+    [ -f "$dir/creds/$vault.json" ] || echo '[]' >"$dir/creds/$vault.json"
+    n=$(counter cred)
+    credential=$(jq -c --arg id "cred_$n" --arg vault "$vault" --arg name "$display" \
+      '{id: $id, type: "vault_credential", vault_id: $vault, display_name: $name, auth: del(.token), archived_at: null}' <<<"$auth")
+    jq --argjson c "$credential" '. + [$c]' "$dir/creds/$vault.json" >"$dir/creds/$vault.tmp"
+    mv "$dir/creds/$vault.tmp" "$dir/creds/$vault.json"
+    jq . <<<"$credential"
+    ;;
+  "agent sessions create")
+    n=$(counter session)
+    : >"$dir/sessions/sess_$n.ndjson"
+    if [ -f "$dir/history.ndjson" ]; then
+      while IFS= read -r line || [ -n "$line" ]; do
+        [ -n "$line" ] && append_event "sess_$n" "$line"
+      done <"$dir/history.ndjson"
+    fi
+    jq -n --arg id "sess_$n" --arg agent "$agent" --arg v "$agent_version" --arg env "$env" --arg title "$title" \
+      --argjson vaults "$(list_json ${vault_ids[@]+"${vault_ids[@]}"})" \
+      '{id: $id, type: "session", agent: {id: $agent, version: ($v | tonumber)}, environment_id: $env, title: $title,
+        vault_ids: $vaults, status: "idle"}'
+    ;;
+  "agent sessions events send message")
+    record_send "$session" "$(jq -cn --arg text "$text" '{type: "user.message", content: [{type: "text", text: $text}]}')"
+    ;;
+  "agent sessions events send tool-confirmation")
+    record_send "$session" "$(jq -cn --arg id "$tool_use" --arg decision "$decision" --arg deny "$deny" \
+      '{type: "user.tool_confirmation", tool_use_id: $id, result: $decision} + (if $deny != "" then {deny_message: $deny} else {} end)')"
+    ;;
+  "agent sessions events stream")
+    [ -n "$timeout" ] || { echo "fake-ork: the scripts must always pass --timeout" >&2; exit 2; }
+    if [ -n "${FAKE_ORK_BARE:-}" ]; then
+      cat "$dir/sessions/$session.ndjson"
+    else
+      jq -c --argjson cursor "${cursor:-0}" 'select((.id | tonumber) >= $cursor)' "$dir/sessions/$session.ndjson"
+    fi
+    sleep 0.1
+    ;;
+  *)
+    echo "fake-ork: unscripted command: $command" >&2
+    exit 2
+    ;;
+esac

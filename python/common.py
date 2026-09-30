@@ -12,6 +12,7 @@ import json
 import os
 import re
 import secrets
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -163,22 +164,66 @@ def ensure_agent(client: Any, state: State, params: dict[str, Any]) -> Agent:
     return agent
 
 
-def ensure_vault(client: Any, state: State, name: str, mcp_url: str, token: str) -> str:
+def mcp_auth_type(config: Config) -> str:
+    mode = config.values.get("SN_MCP_AUTH", "oauth")
+    if mode not in ("oauth", "static_bearer"):
+        raise ConfigError("SN_MCP_AUTH must be oauth or static_bearer.")
+    return "mcp_oauth" if mode == "oauth" else "static_bearer"
+
+
+def authorize_mcp(vault_id: str, config: Config) -> None:
+    """Let ork handle discovery, browser login, PKCE and server-side token storage."""
+    args = ["ork", "agent", "vaults", "credentials", "create", "--vault", vault_id,
+            "--display-name", "streamnative-mcp", "--mcp-server-url", config["SN_MCP_URL"], "-o", "json"]
+    for name, flag in (("SN_MCP_OAUTH_ISSUER", "--oauth-issuer"), ("SN_MCP_OAUTH_SCOPE", "--oauth-scope")):
+        if value := config.values.get(name):
+            args += [flag, value]
+    env = dict(os.environ)
+    env["ORCA_REGISTRY_URL"] = config["ORCA_BASE_URL"]
+    # Export only the chosen Registry credential, never pass it in argv.
+    env.pop("ORCA_API_KEY", None)
+    env.pop("ORCA_ACCESS_TOKEN", None)
+    if config.values.get("ORCA_API_KEY"):
+        env["ORCA_API_KEY"] = config["ORCA_API_KEY"]
+    else:
+        env["ORCA_ACCESS_TOKEN"] = config["SN_API_KEY"]
+    try:
+        result = subprocess.run(args, env=env, check=False)
+    except OSError:
+        raise ConfigError("Install ork with MCP OAuth proxy support and put it on PATH (see docs/before-you-arrive.md).") from None
+    if result.returncode:
+        raise ConfigError("MCP OAuth authorization failed. Check the ork error above and SN_MCP_OAUTH_ISSUER, then rerun L3/L4.")
+
+
+def ensure_vault(client: Any, state: State, name: str, config: Config) -> str:
     """A vault holding the credential the agent uses to call the MCP server.
 
     The token lives in the vault on the server side; it never enters a prompt.
     """
+    auth_type = mcp_auth_type(config)
+    mcp_url = config["SN_MCP_URL"]
+    if auth_type == "static_bearer" and not config.values.get("SN_API_KEY"):
+        raise ConfigError("SN_MCP_AUTH=static_bearer requires SN_API_KEY.")
     vault = _live(client.vaults.retrieve, state.get("vault_id"))
     if vault is None:
         vault = client.vaults.create(display_name=name)
         state.set("vault_id", vault.id)
     credentials = client.vaults.credentials.list(vault.id).data
-    if not any(getattr(c.auth, "mcp_server_url", None) == mcp_url and not c.archived_at for c in credentials):
-        client.vaults.credentials.create(
-            vault.id,
-            display_name="streamnative-mcp",
-            auth={"type": "static_bearer", "mcp_server_url": mcp_url, "token": token},
-        )
+    if not any(getattr(c.auth, "mcp_server_url", None) == mcp_url
+               and c.auth.type == auth_type and not c.archived_at for c in credentials):
+        # Registry permits only one active credential per MCP URL in a vault.
+        # Retire the old auth mode before creating its replacement.
+        for credential in credentials:
+            if getattr(credential.auth, "mcp_server_url", None) == mcp_url and not credential.archived_at:
+                client.vaults.credentials.archive(vault.id, credential.id)
+        if auth_type == "mcp_oauth":
+            authorize_mcp(vault.id, config)
+        else:
+            client.vaults.credentials.create(
+                vault.id,
+                display_name="streamnative-mcp",
+                auth={"type": "static_bearer", "mcp_server_url": mcp_url, "token": config["SN_API_KEY"]},
+            )
     return vault.id
 
 

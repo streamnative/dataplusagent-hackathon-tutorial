@@ -24,7 +24,7 @@ QUESTION = "Which accounts look like an account takeover right now?"
 
 
 def main() -> None:
-    config = load_config(["ORCA_BASE_URL", "SN_API_KEY", "ORCA_MODEL", "SN_MCP_URL"])
+    config = load_config(["ORCA_BASE_URL", "ORCA_MODEL", "SN_MCP_URL"])
     client = orca_client(config)
     state = state_for(config)
     environment_id = ensure_environment(client, state, f"hello-env-{config.participant}")
@@ -35,7 +35,7 @@ def main() -> None:
     print(f"{agent.name} v{agent.version}: {layer['summary']}")
 
     # The MCP server needs a credential. It goes in a vault, never in the prompt.
-    vault_id = ensure_vault(client, state, f"hello-vault-{config.participant}", config["SN_MCP_URL"], config["SN_API_KEY"])
+    vault_id = ensure_vault(client, state, f"hello-vault-{config.participant}", config)
 
     session = client.sessions.create(
         environment_id=environment_id,

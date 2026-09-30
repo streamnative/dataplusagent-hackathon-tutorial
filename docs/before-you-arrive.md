@@ -9,8 +9,12 @@ can pick a different one.
 | **TypeScript** | Node.js 20 or newer |
 | **CLI** | [`ork`](https://github.com/orca-ae/orca-cli) (the Orca CLI) and [`jq`](https://jqlang.org/download/), plus Python 3.11+ *or* Node.js 20+ for two helper scripts |
 
-Everyone also needs `git` and a terminal. On Windows, use WSL or Git Bash for
-the CLI path.
+Everyone also needs `git`, a terminal, and [`ork`](https://github.com/orca-ae/orca-cli)
+for the first OAuth MCP login in L3/L4, including the Python and TypeScript paths.
+Use a build with MCP OAuth proxy issuer pinning and `client_secret_basic` support;
+check `ork agent vaults credentials create --help` for `--oauth-issuer` and
+`--oauth-client-secret-file`. The browser flow stores tokens directly in the vault.
+On Windows, use WSL or Git Bash for the CLI path.
 
 ## 1. Get the code
 

@@ -243,6 +243,14 @@ export class FakeCredentials {
     return credential;
   }
 
+  async archive(vaultId: string, credentialId: string): Promise<VaultCredential> {
+    this.calls.push(['archive', vaultId, credentialId]);
+    const credential = this.store.get(vaultId)?.find((c) => c.id === credentialId);
+    if (!credential) throw notFound();
+    credential.archived_at = NOW;
+    return credential;
+  }
+
   async list(vaultId: string): Promise<{ data: VaultCredential[] }> {
     this.calls.push(['list', vaultId]);
     return { data: [...(this.store.get(vaultId) ?? [])] };

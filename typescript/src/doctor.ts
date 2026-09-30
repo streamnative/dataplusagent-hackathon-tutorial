@@ -12,12 +12,13 @@ import { existsSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import type { Config } from './common.js';
+import type Orca from '@runorca/orca-sdk';
+import type { Config, State } from './common.js';
 
 const TS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CARD = ['SN_API_KEY', 'SN_SERVICE_ACCOUNT', 'ORCA_BASE_URL', 'KAFKA_BOOTSTRAP_SERVERS', 'SCHEMA_REGISTRY_URL', 'SN_MCP_URL', 'LOGIN_TOPIC', 'ORCA_MODEL'];
 const SQL_FIELDS = ['account_id', 'event_time', 'ip_address', 'result', 'failure_reason'];
-const MCP_TOOLS = ['sql_workspace_list_databases', 'sql_workspace_query', 'sql_workspace_insert_rows'];
+const MCP_TOOLS = ['sql_workspace_list_databases', 'sql_workspace_query', 'sql_workspace_describe_table', 'sql_workspace_insert_rows'];
 const PACKAGES = ['@runorca/orca-sdk', 'kafkajs', '@kafkajs/confluent-schema-registry', 'dotenv'];
 
 export interface Check {
@@ -125,14 +126,14 @@ function checkPackages(agentOnly = false): Check[] {
   });
 }
 
-/** Only the CLI path needs these, so a missing tool is reported but never fails. */
+/** ork is needed for first OAuth login; jq is only needed by the CLI path. */
 function checkCliTools(): Check[] {
   const onPath = (tool: string) =>
     (process.env.PATH ?? '')
       .split(delimiter)
       .some((dir) => dir && ['', '.exe', '.cmd'].some((ext) => existsSync(join(dir, tool + ext))));
   return ['ork', 'jq'].map((tool) =>
-    check(`${tool} (CLI path only)`, true, onPath(tool) ? 'found' : 'not found: fine unless you take the CLI path'),
+    check(tool, true, onPath(tool) ? 'found' : (tool === 'ork' ? 'not found: install before first OAuth MCP login' : 'not found: CLI path only')),
   );
 }
 
@@ -248,12 +249,28 @@ async function mcpToolNames(url: string, token: string): Promise<string[]> {
   return names;
 }
 
-async function probeMcp(config: Config): Promise<Check> {
+export async function probeMcp(config: Config, client?: Pick<Orca, 'vaults'>, state?: State): Promise<Check> {
+  const { mcpAuthType, orcaClient, stateFor } = await import('./common.js');
   let names: string[];
   try {
+    if (mcpAuthType(config) === 'mcp_oauth') {
+      client ??= orcaClient(config);
+      state ??= stateFor(config);
+      const vaultId = state.get('vault_id');
+      let fix = 'Run L3 to create the MCP OAuth credential with ork, then rerun doctor.';
+      if (!vaultId) return check('MCP OAuth', false, 'no tutorial vault yet', fix);
+      const { data } = await client.vaults.credentials.list(vaultId);
+      const credential = data.find((c) => c.auth.type === 'mcp_oauth' && c.auth.mcp_server_url === config.get('SN_MCP_URL') && !c.archived_at);
+      if (!credential) return check('MCP OAuth', false, 'no matching OAuth credential', fix);
+      const result = await client.vaults.credentials.validate(vaultId, credential.id);
+      const ok = result.status === 'valid';
+      if (result.status === 'unknown') fix = 'The MCP probe was inconclusive. Check Registry/MCP connectivity and rerun doctor; keep the existing credential.';
+      else if (result.status === 'invalid') fix = `Reauthorize: ork agent vaults credentials archive ${credential.id} --vault ${vaultId}, then rerun L3/L4.`;
+      return check('MCP OAuth', ok, `${result.status}: MCP initialization; SQL tools checked in L3/L4`, ok ? '' : fix);
+    }
     names = await mcpToolNames(config.get('SN_MCP_URL'), config.get('SN_API_KEY'));
   } catch (err) {
-    return check('MCP server', false, errorText(err), 'Check SN_MCP_URL, and that MCP is enabled for your key: ask a facilitator.');
+    return check('MCP server', false, errorText(err), 'Check SN_MCP_URL and SN_MCP_AUTH; for OAuth, finish the L3 browser login and verify the vault credential.');
   }
   return checkMcpTools(names);
 }

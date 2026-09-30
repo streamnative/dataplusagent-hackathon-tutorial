@@ -48,6 +48,7 @@ now() {
 
 words=()
 name="" model="" system="" version="" display="" auth="" vault="" agent="" agent_version="" env="" title=""
+mcp_url=""
 session="" text="" tool_use="" decision="" deny="" cursor="" timeout=""
 mcp=() tools=() metadata=() vault_ids=()
 while [ $# -gt 0 ]; do
@@ -61,6 +62,9 @@ while [ $# -gt 0 ]; do
     --metadata) metadata+=("$2") ;;
     --display-name) display=$2 ;;
     --auth-json) auth=$2 ;;
+    --mcp-server-url) mcp_url=$2 ;;
+    --oauth-issuer) : ;;
+    --oauth-scope) : ;;
     --vault) vault=$2 ;;
     --agent) agent=$2 ;;
     --agent-version) agent_version=$2 ;;
@@ -199,8 +203,23 @@ case "$command" in
     [ -f "$dir/creds/$vault.json" ] || echo '[]' >"$dir/creds/$vault.json"
     jq '{data: .}' "$dir/creds/$vault.json"
     ;;
+  "agent vaults credentials archive "*)
+    file="$dir/creds/$vault.json"
+    [ -f "$file" ] || fail 404 POST "/v1/vaults/$vault/credentials/${words[4]}/archive"
+    jq --arg id "${words[4]}" 'map(if .id == $id then .archived_at = "old" else . end)' "$file" >"$file.tmp"
+    mv "$file.tmp" "$file"
+    echo "archived ${words[4]}"
+    ;;
   "agent vaults credentials create")
     [ -f "$dir/creds/$vault.json" ] || echo '[]' >"$dir/creds/$vault.json"
+    if [ -n "$mcp_url" ]; then
+      [ -z "$auth" ] || { echo "fake-ork: auth modes are mutually exclusive" >&2; exit 2; }
+      auth=$(jq -cn --arg url "$mcp_url" '{type: "mcp_oauth", mcp_server_url: $url}')
+    fi
+    # Enforce the real Registry's one-active-credential-per-URL constraint.
+    if jq -e --arg url "$(jq -r .mcp_server_url <<<"$auth")" 'any(.archived_at == null and .auth.mcp_server_url == $url)' "$dir/creds/$vault.json" >/dev/null; then
+      fail 409 POST "/v1/vaults/$vault/credentials"
+    fi
     n=$(counter cred)
     credential=$(jq -c --arg id "cred_$n" --arg vault "$vault" --arg name "$display" \
       '{id: $id, type: "vault_credential", vault_id: $vault, display_name: $name, auth: del(.token), archived_at: null}' <<<"$auth")

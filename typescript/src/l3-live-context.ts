@@ -13,7 +13,7 @@ import { agentParams, chat, ensureAgent, ensureEnvironment, ensureVault, loadCon
 const QUESTION = 'Which accounts look like an account takeover right now?';
 
 async function main(): Promise<void> {
-  const config = loadConfig(['ORCA_BASE_URL', 'SN_API_KEY', 'ORCA_MODEL', 'SN_MCP_URL']);
+  const config = loadConfig(['ORCA_BASE_URL', 'ORCA_MODEL', 'SN_MCP_URL']);
   const client = orcaClient(config);
   const state = stateFor(config);
   const environmentId = await ensureEnvironment(client, state, `hello-env-${config.participant}`);
@@ -24,7 +24,7 @@ async function main(): Promise<void> {
   console.log(`${agent.name} v${agent.version}: ${layer.summary}`);
 
   // The MCP server needs a credential. It goes in a vault, never in the prompt.
-  const vaultId = await ensureVault(client, state, `hello-vault-${config.participant}`, config.get('SN_MCP_URL'), config.get('SN_API_KEY'));
+  const vaultId = await ensureVault(client, state, `hello-vault-${config.participant}`, config);
 
   const session = await client.sessions.create({
     environment_id: environmentId,

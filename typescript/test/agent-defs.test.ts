@@ -58,7 +58,7 @@ describe('agentParams', () => {
   it.each([
     ['l1-hello', '457f86a77738415f'],
     ['l3-live-context', 'ac4d0b08aca3f336'],
-    ['l4-act', '452e3876c295ffc8'],
+    ['l4-act', '8d424c704af22671'],
   ])('%s fingerprint matches the Python and CLI paths (%s)', (layer, expected) => {
     // Same fingerprint everywhere, so switching languages does not bump the agent's version.
     expect(agentParams(loadLayer(layer), config()).metadata.definition_sha).toBe(expected);
@@ -67,10 +67,12 @@ describe('agentParams', () => {
   it.each([
     ['l3-live-context', 'sql_workspace_list_databases', 'always_allow'],
     ['l3-live-context', 'sql_workspace_query', 'always_allow'],
+    ['l3-live-context', 'sql_workspace_describe_table', 'disabled'],
     ['l3-live-context', 'sql_workspace_insert_rows', 'disabled'],
     ['l3-live-context', 'sql_workspace_delete_rows', 'disabled'],
     ['l3-live-context', 'kafka_client_produce', 'disabled'],
     ['l4-act', 'sql_workspace_query', 'always_allow'],
+    ['l4-act', 'sql_workspace_describe_table', 'always_allow'],
     ['l4-act', 'sql_workspace_insert_rows', 'always_ask'],
     ['l4-act', 'sql_workspace_delete_rows', 'disabled'],
     ['l4-act', 'sql_workspace_create_materialized_view', 'disabled'],

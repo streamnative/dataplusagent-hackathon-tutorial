@@ -92,7 +92,7 @@ def test_a_reserved_environment_name_gets_a_fresh_suffix(state):
 def test_the_vault_gets_one_bearer_credential_for_the_mcp_server(state):
     client = fake_client()
 
-    vault_id = ensure_vault(client, state, "hello-vault-jane", MCP_URL, "the-api-key")
+    vault_id = ensure_vault(client, state, "hello-vault-jane", Config(values={"SN_MCP_AUTH": "static_bearer", "SN_MCP_URL": MCP_URL, "SN_API_KEY": "the-api-key"}, participant="jane"))
 
     creates = client.vaults.credentials.calls
     assert [c for c in creates if c[0] == "create"] == [
@@ -102,9 +102,9 @@ def test_the_vault_gets_one_bearer_credential_for_the_mcp_server(state):
 
 def test_an_existing_credential_for_the_same_server_is_reused(state):
     client = fake_client()
-    first = ensure_vault(client, state, "hello-vault-jane", MCP_URL, "the-api-key")
+    first = ensure_vault(client, state, "hello-vault-jane", Config(values={"SN_MCP_AUTH": "static_bearer", "SN_MCP_URL": MCP_URL, "SN_API_KEY": "the-api-key"}, participant="jane"))
 
-    second = ensure_vault(client, state, "hello-vault-jane", MCP_URL, "the-api-key")
+    second = ensure_vault(client, state, "hello-vault-jane", Config(values={"SN_MCP_AUTH": "static_bearer", "SN_MCP_URL": MCP_URL, "SN_API_KEY": "the-api-key"}, participant="jane"))
 
     assert first == second
     assert len([c for c in client.vaults.credentials.calls if c[0] == "create"]) == 1
@@ -112,9 +112,9 @@ def test_an_existing_credential_for_the_same_server_is_reused(state):
 
 def test_a_new_mcp_url_gets_its_own_credential(state):
     client = fake_client()
-    ensure_vault(client, state, "hello-vault-jane", MCP_URL, "the-api-key")
+    ensure_vault(client, state, "hello-vault-jane", Config(values={"SN_MCP_AUTH": "static_bearer", "SN_MCP_URL": MCP_URL, "SN_API_KEY": "the-api-key"}, participant="jane"))
 
-    ensure_vault(client, state, "hello-vault-jane", MCP_URL + "-v2", "the-api-key")
+    ensure_vault(client, state, "hello-vault-jane", Config(values={"SN_MCP_AUTH": "static_bearer", "SN_MCP_URL": MCP_URL + "-v2", "SN_API_KEY": "the-api-key"}, participant="jane"))
 
     urls = [c[2]["mcp_server_url"] for c in client.vaults.credentials.calls if c[0] == "create"]
     assert urls == [MCP_URL, MCP_URL + "-v2"]

@@ -231,6 +231,14 @@ class FakeCredentials:
         self.store.setdefault(vault_id, []).append(cred)
         return cred
 
+    def archive(self, vault_id: str, credential_id: str):
+        self.calls.append(("archive", vault_id, credential_id))
+        for credential in self.store.get(vault_id, []):
+            if credential.id == credential_id:
+                credential.archived_at = NOW
+                return credential
+        raise _not_found()
+
     def list(self, vault_id: str, **_: Any):
         self.calls.append(("list", vault_id))
         return SimpleNamespace(data=list(self.store.get(vault_id, [])))

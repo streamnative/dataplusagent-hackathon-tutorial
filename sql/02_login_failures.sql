@@ -1,4 +1,6 @@
 -- L2 step 2: turn the stream into always-fresh context for the agent.
+-- Before running: match the quoted "avro.security.login_events" source below
+-- to LOGIN_TOPIC in .env ("avro.<LOGIN_TOPIC>"). SQL Workspace does not load .env.
 --
 -- A materialized view is maintained incrementally: every new login event
 -- updates the counts within seconds. No batch job, no refresh.

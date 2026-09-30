@@ -57,7 +57,7 @@ describe('checkLoginSchema', () => {
 
 describe('checkMcpTools', () => {
   it('the MCP server must offer the three tools the agent uses', () => {
-    const tools = ['sql_workspace_list_databases', 'sql_workspace_query', 'sql_workspace_insert_rows', 'sncloud_context_whoami'];
+    const tools = ['sql_workspace_list_databases', 'sql_workspace_query', 'sql_workspace_describe_table', 'sql_workspace_insert_rows', 'sncloud_context_whoami'];
 
     expect(checkMcpTools(tools).ok).toBe(true);
   });

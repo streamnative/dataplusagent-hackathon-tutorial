@@ -12,7 +12,7 @@
 set -euo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
-hello_setup ORCA_BASE_URL SN_API_KEY ORCA_MODEL SN_MCP_URL
+hello_setup ORCA_BASE_URL ORCA_MODEL SN_MCP_URL
 
 QUESTION="Which accounts look like an account takeover right now?"
 
@@ -25,8 +25,8 @@ echo "$AGENT_NAME v$AGENT_VERSION: $(jq -r .summary "$(layer_file l3-live-contex
 
 # The MCP server needs a credential. It goes in a vault, never in the prompt.
 #      ork agent vaults create --display-name hello-vault-<you>
-#      ork agent vaults credentials create --vault <id> --auth-json '{"type":"static_bearer",...}'
-ensure_vault "hello-vault-$HELLO_PARTICIPANT" "$SN_MCP_URL" "$SN_API_KEY"
+#      ork agent vaults credentials create --vault <id> --mcp-server-url <SN_MCP_URL>
+ensure_vault "hello-vault-$HELLO_PARTICIPANT"
 
 #      ork agent sessions create ... --vault-id <id>
 create_session "L3: live context" "$VAULT_ID"

@@ -52,7 +52,7 @@ def test_an_outcome_field_instead_of_result_gets_a_specific_fix():
 
 
 def test_the_mcp_server_must_offer_the_three_tools_the_agent_uses():
-    tools = ["sql_workspace_list_databases", "sql_workspace_query", "sql_workspace_insert_rows", "sncloud_context_whoami"]
+    tools = ["sql_workspace_list_databases", "sql_workspace_query", "sql_workspace_describe_table", "sql_workspace_insert_rows", "sncloud_context_whoami"]
 
     assert check_mcp_tools(tools).ok
 

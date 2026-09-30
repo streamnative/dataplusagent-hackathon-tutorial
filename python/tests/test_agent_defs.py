@@ -66,10 +66,12 @@ def test_different_layers_carry_different_definition_fingerprints():
     [
         ("l3-live-context", "sql_workspace_list_databases", "always_allow"),
         ("l3-live-context", "sql_workspace_query", "always_allow"),
+        ("l3-live-context", "sql_workspace_describe_table", "disabled"),
         ("l3-live-context", "sql_workspace_insert_rows", "disabled"),
         ("l3-live-context", "sql_workspace_delete_rows", "disabled"),
         ("l3-live-context", "kafka_client_produce", "disabled"),
         ("l4-act", "sql_workspace_query", "always_allow"),
+        ("l4-act", "sql_workspace_describe_table", "always_allow"),
         ("l4-act", "sql_workspace_insert_rows", "always_ask"),
         ("l4-act", "sql_workspace_delete_rows", "disabled"),
         ("l4-act", "sql_workspace_create_materialized_view", "disabled"),

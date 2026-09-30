@@ -11,7 +11,7 @@
 set -euo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
-hello_setup ORCA_BASE_URL SN_API_KEY ORCA_MODEL
+hello_setup ORCA_BASE_URL ORCA_MODEL
 
 QUESTION="Hi! What is the Data + Agent Hackathon, and what can you see right now?"
 [ $# -eq 0 ] || QUESTION="$*"

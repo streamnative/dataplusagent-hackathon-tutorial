@@ -205,6 +205,15 @@ export class FakeEnvironments {
     return environment;
   }
 
+  async archive(environmentId: string): Promise<Environment> {
+    this.calls.push(['archive', environmentId]);
+    const environment = this.store.get(environmentId);
+    if (!environment) throw notFound();
+    const archived = { ...environment, archived_at: NOW };
+    this.store.set(environmentId, archived);
+    return archived;
+  }
+
   async delete(environmentId: string): Promise<void> {
     this.calls.push(['delete', environmentId]);
     if (!this.store.delete(environmentId)) throw notFound();

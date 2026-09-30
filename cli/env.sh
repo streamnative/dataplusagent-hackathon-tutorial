@@ -75,13 +75,17 @@ hello_setup() {
     hello_die "jq is not installed. Install it (brew install jq, apt install jq, or winget install jqlang.jq) and try again."
 
   hello_load_dotenv
-  hello_require "$@"
-
-  # ork reads ORCA_REGISTRY_URL and ORCA_ACCESS_TOKEN (sent as a Bearer token),
-  # and refuses to start if ORCA_API_KEY is also set.
+  # Registry workspace keys use x-api-key; team-card keys use Bearer.
+  # Keep the two CLI credentials mutually exclusive.
+  if [ -n "$(hello_trim "${ORCA_API_KEY:-}")" ]; then
+    hello_require "$@" ORCA_API_KEY
+    unset ORCA_ACCESS_TOKEN
+  else
+    hello_require "$@" SN_API_KEY
+    export ORCA_ACCESS_TOKEN="$SN_API_KEY"
+    unset ORCA_API_KEY
+  fi
   export ORCA_REGISTRY_URL="$ORCA_BASE_URL"
-  export ORCA_ACCESS_TOKEN="$SN_API_KEY"
-  unset ORCA_API_KEY
 
   local who
   who=$(printenv PARTICIPANT || true)

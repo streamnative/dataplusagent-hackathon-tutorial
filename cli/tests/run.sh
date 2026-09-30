@@ -106,7 +106,7 @@ test_missing_team_card() {
   run "" l1_hello.sh
   check "exits 1 without a team card" [ "$STATUS" -eq 1 ]
   check "names every missing variable" \
-    err_has "Missing ORCA_BASE_URL, SN_API_KEY, ORCA_MODEL. Copy .env.example to .env in the repo root and fill it in from your team card."
+    err_has "Missing ORCA_BASE_URL, ORCA_MODEL, SN_API_KEY. Copy .env.example to .env in the repo root and fill it in from your team card."
   check "runs no ork command" [ ! -s "$FAKE_ORK_DIR/calls.log" ]
 }
 
@@ -116,6 +116,7 @@ test_l1_creates_everything() {
   reaction 1 "$(message evt_a 'Hello!')" "$(end_turn 1)"
   run "" l1_hello.sh
   check "L1 succeeds" [ "$STATUS" -eq 0 ]
+  check "hosted team cards use only Bearer" jq -e '.access_token_set and (.api_key_set | not)' "$FAKE_ORK_DIR/auth.json"
   check "creates the environment" called '["agent","environments","create","--name","hello-env-jane","-o","json"]'
   check "creates the agent with the L1 fingerprint" called_with "agent create" "definition_sha=$SHA_L1"
   check "names the agent after the participant" called_with "agent create" "hello-agent-jane"
@@ -176,7 +177,7 @@ test_l1_creates_everything() {
   check "cleanup succeeds" [ "$STATUS" -eq 0 ]
   check "archives the agent" out_has "removed agent agent_2"
   check "deletes the vault" out_has "removed vault vlt_1"
-  check "deletes the environment" out_has "removed environment env_1"
+  check "archives the environment" out_has "removed environment env_1"
   check "forgets the ids" [ ! -f "$R/.orca-state/jane.json" ]
 }
 
@@ -323,6 +324,23 @@ test_team_card_parsing() {
   check "state goes to the participant's file" [ -f "$R/.orca-state/jane-doe-42.json" ]
 }
 
+test_local_registry_key() {
+  fresh_repo local-key
+  cat >"$R/.env" <<EOF
+ORCA_BASE_URL=http://127.0.0.1:8080
+ORCA_API_KEY=local-test-key
+ORCA_MODEL=claude-sonnet-4-6
+PARTICIPANT=jane
+EOF
+  export ORCA_ACCESS_TOKEN=stale-bearer
+  reaction 1 "$(message evt_a 'Hello locally!')" "$(end_turn local)"
+  run "" l1_hello.sh
+  unset ORCA_ACCESS_TOKEN
+  check "local L1 needs no team-card key" [ "$STATUS" -eq 0 ]
+  check "local key uses only x-api-key" jq -e '.api_key_set and (.access_token_set | not)' "$FAKE_ORK_DIR/auth.json"
+}
+
+test_local_registry_key
 test_missing_team_card
 test_l1_creates_everything
 test_turns_ignore_history_and_duplicates

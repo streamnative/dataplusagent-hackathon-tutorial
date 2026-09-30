@@ -57,7 +57,7 @@ describe('askHuman', () => {
 });
 
 describe('cleanup', () => {
-  it('archives the agent, deletes the rest, and forgets the ids', async () => {
+  it('archives the agent and environment, deletes the vault, and forgets the ids', async () => {
     const client = fakeClient();
     const dir = mkdtempSync(join(tmpdir(), 'hello-state-'));
     const state = new State(join(dir, 'jane.json'));
@@ -68,7 +68,8 @@ describe('cleanup', () => {
     await cleanup(client, state, { out: quiet });
 
     expect(client.agents.store.get(agent.id)!.archived_at).not.toBeNull();
-    expect(client.environments.store.has(environmentId)).toBe(false);
+    expect(client.environments.store.get(environmentId)!.archived_at).not.toBeNull();
+    expect(client.environments.calls).not.toContainEqual(['delete', environmentId]);
     expect(client.vaults.store.has(vaultId)).toBe(false);
     expect(existsSync(join(dir, 'jane.json'))).toBe(false);
   });

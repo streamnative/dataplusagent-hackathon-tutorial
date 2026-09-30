@@ -12,7 +12,7 @@ import { agentParams, ensureAgent, ensureEnvironment, loadConfig, loadLayer, orc
 const QUESTION = 'Hi! What is the Data + Agent Hackathon, and what can you see right now?';
 
 async function main(): Promise<void> {
-  const config = loadConfig(['ORCA_BASE_URL', 'SN_API_KEY', 'ORCA_MODEL']);
+  const config = loadConfig(['ORCA_BASE_URL', 'ORCA_MODEL']);
   const client = orcaClient(config);
   const state = stateFor(config);
 

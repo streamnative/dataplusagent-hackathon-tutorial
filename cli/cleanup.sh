@@ -8,7 +8,7 @@
 set -euo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
-hello_setup ORCA_BASE_URL SN_API_KEY
+hello_setup ORCA_BASE_URL
 
 remove() {  # remove <label> <state key> <ork command...>
   local id
@@ -26,5 +26,5 @@ remove() {  # remove <label> <state key> <ork command...>
 # Agents cannot be deleted, only archived.
 remove agent agent_id agent archive
 remove vault vault_id agent vaults delete
-remove environment environment_id agent environments delete
+remove environment environment_id agent environments archive
 rm -f "$HELLO_STATE_FILE"

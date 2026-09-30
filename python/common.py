@@ -130,8 +130,12 @@ def _lookup(name: str, config: Config) -> str:
 
 
 def orca_client(config: Config) -> Orca:
-    """One service-account API key, sent as a Bearer token, authenticates everything."""
-    return Orca(base_url=config["ORCA_BASE_URL"], api_key=config["SN_API_KEY"], timeout=600)
+    """Use a Registry workspace key locally, or the team card's hosted Bearer key."""
+    if key := config.values.get("ORCA_API_KEY"):
+        return Orca(base_url=config["ORCA_BASE_URL"], api_key=None, default_headers={"x-api-key": key}, timeout=600)
+    if key := config.values.get("SN_API_KEY"):
+        return Orca(base_url=config["ORCA_BASE_URL"], api_key=key, timeout=600)
+    raise ConfigError("Set ORCA_API_KEY for ork local, or SN_API_KEY from your team card.")
 
 
 def ensure_environment(client: Any, state: State, name: str) -> str:
@@ -216,11 +220,11 @@ def ask_human(tool_use: dict[str, Any], *, ask: Callable[[str], str] = input, ou
 
 
 def cleanup(client: Any, state: State, *, out: Callable[[str], None] = print) -> None:
-    """Remove what the scripts created. Agents cannot be deleted, only archived."""
+    """Archive the agent and environment, and delete the vault. Sessions reserve the environment."""
     steps = [
         ("agent", "agent_id", client.agents.archive),
         ("vault", "vault_id", client.vaults.delete),
-        ("environment", "environment_id", client.environments.delete),
+        ("environment", "environment_id", client.environments.archive),
     ]
     for label, key, remove in steps:
         resource_id = state.get(key)

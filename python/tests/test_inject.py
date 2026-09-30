@@ -83,19 +83,19 @@ class FakeProducer:
 def test_publish_writes_every_record_keyed_by_account():
     producer = FakeProducer()
 
-    errors = publish(producer, "avro.security.login_events", "acct_9123", burst())
+    errors = publish(producer, "security.login_events", "acct_9123", burst())
 
     assert errors == []
     assert len(producer.produced) == 7
-    assert {(topic, key) for topic, key, _ in producer.produced} == {("avro.security.login_events", "acct_9123")}
+    assert {(topic, key) for topic, key, _ in producer.produced} == {("security.login_events", "acct_9123")}
 
 
 def test_a_schema_registry_failure_is_reported_instead_of_raised():
     from confluent_kafka.error import ValueSerializationError
 
-    producer = FakeProducer(raise_on_produce=ValueSerializationError(Exception("Subject 'avro.security.login_events-value' not found")))
+    producer = FakeProducer(raise_on_produce=ValueSerializationError(Exception("Subject 'security.login_events-value' not found")))
 
-    errors = publish(producer, "avro.security.login_events", "acct_9123", burst())
+    errors = publish(producer, "security.login_events", "acct_9123", burst())
 
     assert any("not found" in e for e in errors)
 

@@ -211,7 +211,7 @@ export interface Client {
   environments: {
     create(params: EnvironmentCreateParams): Promise<Environment>;
     retrieve(environmentId: string): Promise<Environment>;
-    delete(environmentId: string): Promise<unknown>;
+    archive(environmentId: string): Promise<Environment>;
   };
   vaults: {
     create(params: VaultCreateParams): Promise<Vault>;
@@ -228,9 +228,14 @@ export interface Client {
   };
 }
 
-/** One service-account API key, sent as a Bearer token, authenticates everything. */
-export function orcaClient(config: Config): Client {
-  return new Orca({ baseURL: config.get('ORCA_BASE_URL'), apiKey: config.get('SN_API_KEY'), timeout: 600_000 });
+/** Use a Registry workspace key locally, or the team card's hosted Bearer key. */
+export function orcaClient(config: Config): Orca {
+  const baseURL = config.get('ORCA_BASE_URL');
+  if (config.has('ORCA_API_KEY')) {
+    return new Orca({ baseURL, apiKey: null, defaultHeaders: { 'x-api-key': config.get('ORCA_API_KEY') }, timeout: 600_000 });
+  }
+  if (config.has('SN_API_KEY')) return new Orca({ baseURL, apiKey: config.get('SN_API_KEY'), timeout: 600_000 });
+  throw new ConfigError('Set ORCA_API_KEY for ork local, or SN_API_KEY from your team card.');
 }
 
 /** The sandbox your sessions run in. Created once, then reused. */
@@ -348,7 +353,7 @@ export async function askHuman(toolUse: ToolUse, { ask = prompt, out = console.l
   return ['y', 'yes'].includes((await ask('Allow it? [y/N] ')).trim().toLowerCase());
 }
 
-/** Remove what the scripts created. Agents cannot be deleted, only archived. */
+/** Archive the agent and environment, and delete the vault. Sessions reserve the environment. */
 export async function cleanup(
   client: Pick<Client, 'agents' | 'environments' | 'vaults'>,
   state: State,
@@ -357,7 +362,7 @@ export async function cleanup(
   const steps: Array<[string, string, (id: string) => Promise<unknown>]> = [
     ['agent', 'agent_id', (id) => client.agents.archive(id)],
     ['vault', 'vault_id', (id) => client.vaults.delete(id)],
-    ['environment', 'environment_id', (id) => client.environments.delete(id)],
+    ['environment', 'environment_id', (id) => client.environments.archive(id)],
   ];
   for (const [label, key, remove] of steps) {
     const resourceId = state.get(key);

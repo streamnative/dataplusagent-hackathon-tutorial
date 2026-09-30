@@ -2,7 +2,7 @@
 
 import pytest
 
-from common import ConfigError, load_config
+from common import ConfigError, load_config, orca_client
 
 CARD = {
     "ORCA_BASE_URL": "https://ws.example.com",
@@ -51,3 +51,38 @@ def test_participant_defaults_to_the_os_user(monkeypatch):
     monkeypatch.setattr("getpass.getuser", lambda: "Sam.Lee")
 
     assert load_config([], env={}).participant == "sam-lee"
+
+
+@pytest.mark.parametrize(
+    "credentials, bearer, workspace_key",
+    [
+        ({"SN_API_KEY": "team-key"}, "Bearer team-key", None),
+        ({"ORCA_API_KEY": "local-key"}, None, "local-key"),
+        ({"ORCA_API_KEY": "local-key", "SN_API_KEY": "mcp-key"}, None, "local-key"),
+    ],
+)
+def test_client_sends_exactly_one_registry_credential(monkeypatch, credentials, bearer, workspace_key):
+    import httpx2
+    from orca import Orca
+
+    seen = []
+    def respond(request):
+        seen.append(request)
+        return httpx2.Response(200, json={"data": [], "next_page": None})
+
+    monkeypatch.setenv("ORCA_API_KEY", "ambient-key-must-not-be-used-as-bearer")
+    monkeypatch.setattr("common.Orca", lambda **kwargs: Orca(
+        **kwargs, http_client=httpx2.Client(transport=httpx2.MockTransport(respond))
+    ))
+    config = load_config([], env={"ORCA_BASE_URL": "http://127.0.0.1:8080", **credentials})
+    with orca_client(config) as client:
+        client.agents.list(limit=1)
+
+    assert len(seen) == 1
+    assert seen[0].headers.get("Authorization") == bearer
+    assert seen[0].headers.get("x-api-key") == workspace_key
+
+
+def test_client_explains_how_to_supply_a_missing_registry_credential():
+    with pytest.raises(ConfigError, match="ORCA_API_KEY.*SN_API_KEY"):
+        orca_client(load_config([], env={"ORCA_BASE_URL": "http://127.0.0.1:8080"}))

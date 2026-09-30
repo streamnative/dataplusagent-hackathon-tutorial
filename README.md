@@ -18,7 +18,7 @@ them from live data, and flag the account once you say so.
 
 ```mermaid
 flowchart LR
-    K["Kafka topic<br/>avro.security.login_events"] --> S["SQL Workspace<br/>materialized view<br/>login_failures"]
+    K["Kafka topic<br/>security.login_events"] --> S["SQL Workspace<br/>materialized view<br/>login_failures"]
     J["inject<br/>(you, in L3)"] -- "new login burst" --> K
     S -- "StreamNative MCP<br/>sql_workspace_query" --> A["Orca agent<br/>hello-agent-&lt;you&gt;"]
     A -- "sql_workspace_insert_rows<br/>(only if you approve)" --> F["SQL table<br/>flagged_accounts"]
@@ -56,6 +56,26 @@ Go to your path's folder and run the doctor:
 
 Every line should say `PASS`. A failed check prints its fix. Still stuck after
 two tries? Raise your hand.
+
+### Use a local Agent Engine
+
+Start the CLI's stack with a provider key in your shell:
+
+```bash
+export ANTHROPIC_API_KEY='<your-provider-key>'
+ork local start --with-gateway
+```
+
+Set `ORCA_BASE_URL=http://127.0.0.1:8080` in the tutorial's `.env`, and copy the
+workspace key from the file printed by `ork local start` into `ORCA_API_KEY`.
+The tutorial sends this key as `x-api-key`. A hosted team card continues to use
+`SN_API_KEY` as a Bearer token when `ORCA_API_KEY` is empty.
+
+For L1, run `python doctor.py --agent-only` or `npm run doctor -- --agent-only`.
+This checks the Agent Engine without requiring Kafka, Schema Registry, or MCP.
+The local stack provides the Agent Engine and AI Gateway; L2–L4 still need the
+streaming data services from your team card. For L3/L4, keep `SN_API_KEY` set to
+the MCP service key, separately from the local Registry's `ORCA_API_KEY`.
 
 ## L1: Hello, agent (5 min)
 
@@ -150,6 +170,8 @@ create a new version when its definition changes.
 
 In the StreamNative Cloud console, open **SQL Workspace**, select the hackathon
 workspace, and pick your team's database. Use a new query tab for each step.
+The Kafka topic is `security.login_events` (`LOGIN_TOPIC` in `.env`); SQL Workspace
+exposes the Avro source as `"avro.security.login_events"`.
 
 **1. Peek at the stream** ([`sql/01_explore.sql`](sql/01_explore.sql)). Each row
 is one login attempt. The topic name contains dots, so it's double-quoted.
@@ -353,8 +375,9 @@ action, and you have your hackathon project. Ideas and next steps:
 |---|---|---|
 | `./cleanup.sh` | `python cleanup.py` | `npm run cleanup` |
 
-This archives your agent and deletes your vault and environment. To start L2
-over, run [`sql/99_reset.sql`](sql/99_reset.sql).
+This archives your agent and environment, and deletes your vault. An environment
+with session history cannot be deleted; archiving keeps that history available.
+To start L2 over, run [`sql/99_reset.sql`](sql/99_reset.sql).
 
 ## What's in this repository
 

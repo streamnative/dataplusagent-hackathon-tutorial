@@ -198,6 +198,13 @@ class FakeEnvironments:
             raise _not_found()
         return self.store[environment_id]
 
+    def archive(self, environment_id: str):
+        self.calls.append(("archive", environment_id))
+        if environment_id not in self.store:
+            raise _not_found()
+        self.store[environment_id] = _archived(self.store[environment_id])
+        return self.store[environment_id]
+
     def delete(self, environment_id: str):
         self.calls.append(("delete", environment_id))
         if self.store.pop(environment_id, None) is None:

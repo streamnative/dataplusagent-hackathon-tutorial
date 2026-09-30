@@ -14,7 +14,7 @@ QUESTION = "Hi! What is the Data + Agent Hackathon, and what can you see right n
 
 
 def main() -> None:
-    config = load_config(["ORCA_BASE_URL", "SN_API_KEY", "ORCA_MODEL"])
+    config = load_config(["ORCA_BASE_URL", "ORCA_MODEL"])
     client = orca_client(config)
     state = state_for(config)
 

@@ -99,3 +99,18 @@ def test_an_mcp_error_response_raises_with_its_message():
 )
 def test_kafka_errors_map_to_a_concrete_fix(error, advice):
     assert advice in kafka_hint(error)
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "[::1]"])
+def test_local_http_agent_engine_is_accepted(host):
+    assert check_orca_base_url(f"http://{host}:8080").ok
+
+
+def test_non_local_http_still_requires_https():
+    assert not check_orca_base_url("http://ws.example.com").ok
+
+
+def test_local_api_path_suggests_the_local_host_root():
+    check = check_orca_base_url("http://127.0.0.1:8080/v1")
+    assert not check.ok
+    assert "http://127.0.0.1:8080" in check.fix

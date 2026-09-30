@@ -19,6 +19,12 @@ set -euo pipefail
 dir=${FAKE_ORK_DIR:?FAKE_ORK_DIR is not set}
 mkdir -p "$dir/agents" "$dir/envs" "$dir/vaults" "$dir/creds" "$dir/sessions" "$dir/reactions"
 jq -cn '$ARGS.positional' --args -- "$@" >>"$dir/calls.log"
+api_key_set=false
+access_token_set=false
+[ -z "${ORCA_API_KEY:-}" ] || api_key_set=true
+[ -z "${ORCA_ACCESS_TOKEN:-}" ] || access_token_set=true
+jq -cn --argjson api "$api_key_set" --argjson bearer "$access_token_set" \
+  '{api_key_set: $api, access_token_set: $bearer}' >"$dir/auth.json"
 
 fail() {  # fail <status> <method> <path>
   printf 'Error: failed: %s http://fake.invalid%s returned status %s: {"type":"error","error":{"type":"error","message":"fake %s"}}\n' \
@@ -163,6 +169,12 @@ case "$command" in
   "agent environments get "*)
     [ -f "$dir/envs/${words[3]}.json" ] || fail 404 GET "/v1/environments/${words[3]}"
     cat "$dir/envs/${words[3]}.json"
+    ;;
+  "agent environments archive "*)
+    [ -f "$dir/envs/${words[3]}.json" ] || fail 404 POST "/v1/environments/${words[3]}/archive"
+    jq --arg now "$(now)" '.archived_at = $now' "$dir/envs/${words[3]}.json" >"$dir/env.tmp"
+    mv "$dir/env.tmp" "$dir/envs/${words[3]}.json"
+    echo "archived ${words[3]}"
     ;;
   "agent environments delete "*)
     [ -f "$dir/envs/${words[3]}.json" ] || fail 404 DELETE "/v1/environments/${words[3]}"

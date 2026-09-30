@@ -330,7 +330,7 @@ export function authorizeMcp(vaultId: string, config: Config): void {
   // No shell and no credentials in argv; OAuth tokens are never read by this script.
   const result = spawnSync('ork', args, { env, stdio: 'inherit' });
   if (result.error) throw new ConfigError('Install ork with MCP OAuth proxy support and put it on PATH (see docs/before-you-arrive.md).');
-  if (result.status !== 0) throw new ConfigError('MCP OAuth authorization failed. Check the ork error above and SN_MCP_OAUTH_ISSUER, then rerun L3/L4.');
+  if (result.status !== 0) throw new ConfigError('MCP OAuth authorization failed. Check the ork error above; normally leave SN_MCP_OAUTH_ISSUER empty for discovery, then rerun L3/L4.');
 }
 
 /** The remembered resource, or null if it was never created, deleted, or archived. */

@@ -11,9 +11,13 @@ can pick a different one.
 
 Everyone also needs `git`, a terminal, and [`ork`](https://github.com/orca-ae/orca-cli)
 for the first OAuth MCP login in L3/L4, including the Python and TypeScript paths.
-Use a build with MCP OAuth proxy issuer pinning and `client_secret_basic` support;
-check `ork agent vaults credentials create --help` for `--oauth-issuer` and
-`--oauth-client-secret-file`. The browser flow stores tokens directly in the vault.
+Use current `orca-cli` main or a build containing [PR #8](https://github.com/orca-ae/orca-cli/pull/8).
+Check `ork agent vaults credentials create --help` for `--oauth-issuer` and
+`--oauth-allow-issuer-mismatch`. Automatic discovery handles StreamNative's
+same-domain proxy issuer aliases and dynamic client authentication. Leave
+`SN_MCP_OAUTH_ISSUER` empty for this flow; `--oauth-issuer` only selects an
+authorization server advertised by the MCP server when a choice is needed.
+The browser flow stores tokens directly in the vault.
 On Windows, use WSL or Git Bash for the CLI path.
 
 ## 1. Get the code

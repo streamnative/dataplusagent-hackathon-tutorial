@@ -61,8 +61,14 @@ stored OAuth credential. This check verifies MCP initialization; L3/L4 exercise
 the actual SQL tools. A failed check prints its fix. Still stuck after two tries?
 Raise your hand.
 
-For StreamNative SQL Workspace MCP, keep `SN_MCP_AUTH=oauth` and the issuer/scope
-settings from `.env.example`. `SN_API_KEY` authenticates the hosted Agent Engine,
+For StreamNative SQL Workspace MCP, keep `SN_MCP_AUTH=oauth`, leave
+`SN_MCP_OAUTH_ISSUER` empty for automatic discovery, and use the scope from
+`.env.example`. Use an `ork` build containing [PR #8](https://github.com/orca-ae/orca-cli/pull/8)
+or current main. Its discovery accepts HTTPS issuer aliases within the same
+registrable domain and port. Only set `SN_MCP_OAUTH_ISSUER` when selecting one
+of multiple advertised `authorization_servers`; copy that advertised value
+exactly rather than the final issuer in authorization-server metadata.
+`SN_API_KEY` authenticates the hosted Agent Engine,
 Kafka and Schema Registry; it is not the OAuth MCP access token. All three paths
 use `ork` for the first MCP login, then reuse the live credential for the same URL
 and auth type from `.orca-state/<participant>.json`. Tokens stay in the server-side
@@ -332,7 +338,7 @@ ork agent update "$AGENT_ID" --version 1 --model "$ORCA_MODEL" \
 ork agent vaults create --display-name hello-vault-ana -o json
 ork agent vaults credentials create --vault "$VAULT_ID" --display-name streamnative-mcp \
   --mcp-server-url "$SN_MCP_URL" \
-  --oauth-issuer "$SN_MCP_OAUTH_ISSUER" --oauth-scope "$SN_MCP_OAUTH_SCOPE" -o json
+  --oauth-scope "$SN_MCP_OAUTH_SCOPE" -o json
 
 ork agent sessions create --agent "$AGENT_ID" --agent-version 2 \
   --environment-id "$ENVIRONMENT_ID" --vault-id "$VAULT_ID" --title "L3: live context" -o json
@@ -408,7 +414,7 @@ action, and you have your hackathon project. Ideas and next steps:
 | `relation "avro.security.login_events" does not exist` | Select your team's database and update the quoted Avro source in both L2 SQL files to match `LOGIN_TOPIC` in `.env`. |
 | The agent can't find `login_failures` | Create the view in your team's database (L2, step 2); the agent looks it up there. |
 | `[error]` lines from MCP tools in L3 | Check `SN_MCP_URL` and `SN_MCP_AUTH`, finish the OAuth login, then rerun the doctor. |
-| OAuth issuer mismatch / unsupported client authentication | Install an `ork` build with OAuth proxy and `client_secret_basic` support; verify `SN_MCP_OAUTH_ISSUER` against trusted provider setup. |
+| OAuth issuer mismatch / unsupported client authentication | Use current `ork` main or PR #8 and leave `SN_MCP_OAUTH_ISSUER` empty for StreamNative discovery. An explicit issuer must match an advertised authorization server. `--oauth-allow-issuer-mismatch` is only for trusted servers whose metadata issuer crosses registrable domains; StreamNative does not need it. |
 | `Cannot reach the Agent Engine` | `ORCA_BASE_URL` must be the host root from your card, with no `/v1`. |
 | The agent answers from memory instead of querying | Ask again, "check the view first". The system prompt tells it to always query. |
 

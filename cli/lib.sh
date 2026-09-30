@@ -216,7 +216,7 @@ ensure_vault() {  # ensure_vault <name>
       [ -z "${SN_MCP_OAUTH_SCOPE:-}" ] || oauth_args+=(--oauth-scope "$SN_MCP_OAUTH_SCOPE")
       # Keep the browser URL and callback progress visible; tokens go directly to the vault.
       ork agent vaults credentials create "${oauth_args[@]}" -o json ||
-        hello_die "MCP OAuth authorization failed. Check the ork error above and SN_MCP_OAUTH_ISSUER, then rerun L3/L4."
+        hello_die "MCP OAuth authorization failed. Check the ork error above; normally leave SN_MCP_OAUTH_ISSUER empty for discovery, then rerun L3/L4."
     else
       auth=$(jq -cn --arg url "$SN_MCP_URL" --arg token "$SN_API_KEY" '{type: "static_bearer", mcp_server_url: $url, token: $token}')
       ork_json agent vaults credentials create --vault "$VAULT_ID" --display-name streamnative-mcp --auth-json "$auth" \

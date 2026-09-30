@@ -192,7 +192,7 @@ def authorize_mcp(vault_id: str, config: Config) -> None:
     except OSError:
         raise ConfigError("Install ork with MCP OAuth proxy support and put it on PATH (see docs/before-you-arrive.md).") from None
     if result.returncode:
-        raise ConfigError("MCP OAuth authorization failed. Check the ork error above and SN_MCP_OAUTH_ISSUER, then rerun L3/L4.")
+        raise ConfigError("MCP OAuth authorization failed. Check the ork error above; normally leave SN_MCP_OAUTH_ISSUER empty for discovery, then rerun L3/L4.")
 
 
 def ensure_vault(client: Any, state: State, name: str, config: Config) -> str:

@@ -9,7 +9,7 @@
 import { cleanup, loadConfig, orcaClient, runMain, stateFor } from './common.js';
 
 async function main(): Promise<void> {
-  const config = loadConfig(['ORCA_BASE_URL', 'SN_API_KEY']);
+  const config = loadConfig(['ORCA_BASE_URL']);
   await cleanup(orcaClient(config), stateFor(config));
 }
 

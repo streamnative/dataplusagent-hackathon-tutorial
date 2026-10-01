@@ -18,7 +18,7 @@ them from live data, and flag the account once you say so.
 
 ```mermaid
 flowchart LR
-    K["Kafka topic<br/>avro.security.login_events"] --> S["SQL Workspace<br/>materialized view<br/>login_failures"]
+    K["Kafka topic<br/>security.login_events"] --> S["SQL Workspace<br/>materialized view<br/>login_failures"]
     J["inject<br/>(you, in L3)"] -- "new login burst" --> K
     S -- "StreamNative MCP<br/>sql_workspace_query" --> A["Orca agent<br/>hello-agent-&lt;you&gt;"]
     A -- "sql_workspace_insert_rows<br/>(only if you approve)" --> F["SQL table<br/>flagged_accounts"]
@@ -26,7 +26,7 @@ flowchart LR
 
 | Step | Time | Where | You | The idea |
 |---|---|---|---|---|
-| [0. Connect](#step-0-connect-3-min) | 3 min | terminal | Fill in `.env`, run the doctor | One key, checked end to end |
+| [0. Connect](#step-0-connect-3-min) | 3 min | terminal | Fill in `.env`, run the doctor | Check service access; authorize MCP with OAuth |
 | [L1. Hello, agent](#l1-hello-agent-5-min) | 5 min | CLI / Python / TS | Create an agent and chat | Agent, environment, session, events |
 | [L2. Hello, streaming SQL](#l2-hello-streaming-sql-8-min) | 8 min | SQL Workspace | Build a materialized view over the topic | Context that keeps itself fresh |
 | [L3. Agent + live context](#l3-agent--live-context-9-min) | 9 min | CLI / Python / TS | Give the agent SQL tools, inject new data | The answer changes with the data |
@@ -54,8 +54,52 @@ Go to your path's folder and run the doctor:
 | TypeScript | `cd typescript && npm run doctor` |
 | CLI | `cd cli`, and run the doctor from your helper language: `(cd ../python && .venv/bin/python doctor.py)` or `(cd ../typescript && npm run doctor)` |
 
-Every line should say `PASS`. A failed check prints its fix. Still stuck after
-two tries? Raise your hand.
+The service checks should say `PASS`. Before the first OAuth login, the MCP
+check asks you to run L3; that script opens your browser and stores the credential
+in a vault. After completing L2 and running L3, rerun the doctor to validate the
+stored OAuth credential. This check verifies MCP initialization; L3/L4 exercise
+the actual SQL tools. A failed check prints its fix. Still stuck after two tries?
+Raise your hand.
+
+For StreamNative SQL Workspace MCP, keep `SN_MCP_AUTH=oauth`, leave
+`SN_MCP_OAUTH_ISSUER` empty for automatic discovery, and use the scope from
+`.env.example`. Use an `ork` build containing [PR #8](https://github.com/orca-ae/orca-cli/pull/8)
+or current main. Its discovery accepts HTTPS issuer aliases within the same
+registrable domain and port. Only set `SN_MCP_OAUTH_ISSUER` when selecting one
+of multiple advertised `authorization_servers`; copy that advertised value
+exactly rather than the final issuer in authorization-server metadata.
+`SN_API_KEY` authenticates the hosted Agent Engine,
+Kafka and Schema Registry; it is not the OAuth MCP access token. All three paths
+use `ork` for the first MCP login, then reuse the live credential for the same URL
+and auth type from `.orca-state/<participant>.json`. Tokens stay in the server-side
+vault, where they can be refreshed; they are never written to `.env` or local state.
+Set `SN_MCP_AUTH=static_bearer` only when your MCP server accepts `SN_API_KEY`.
+Changing the auth mode archives the previous live credential for that same URL
+before creating its replacement (the Registry permits one active credential per
+URL in a vault). If authorization fails, rerun L3/L4 to finish setup; other URLs'
+credentials are preserved. A local Agent Engine with OAuth MCP needs only
+`ORCA_API_KEY` for Registry authentication; `SN_API_KEY` is still needed for Kafka
+and Schema Registry.
+
+### Use a local Agent Engine
+
+Start the CLI's stack with a provider key in your shell:
+
+```bash
+export ANTHROPIC_API_KEY='<your-provider-key>'
+ork local start --with-gateway
+```
+
+Set `ORCA_BASE_URL=http://127.0.0.1:8080` in the tutorial's `.env`, and copy the
+workspace key from the file printed by `ork local start` into `ORCA_API_KEY`.
+The tutorial sends this key as `x-api-key`. A hosted team card continues to use
+`SN_API_KEY` as a Bearer token when `ORCA_API_KEY` is empty.
+
+For L1, run `python doctor.py --agent-only` or `npm run doctor -- --agent-only`.
+This checks the Agent Engine without requiring Kafka, Schema Registry, or MCP.
+The local stack provides the Agent Engine and AI Gateway; L2–L4 still need the
+streaming data services from your team card. For L3/L4, keep `SN_API_KEY` set to
+the MCP service key, separately from the local Registry's `ORCA_API_KEY`.
 
 ## L1: Hello, agent (5 min)
 
@@ -150,6 +194,19 @@ create a new version when its definition changes.
 
 In the StreamNative Cloud console, open **SQL Workspace**, select the hackathon
 workspace, and pick your team's database. Use a new query tab for each step.
+The default Kafka topic is `security.login_events`; SQL Workspace exposes its
+Avro source as `"avro.security.login_events"`.
+
+**Align the SQL with your `.env` before running it.** The injectors and doctor use
+`LOGIN_TOPIC`, but the SQL files and examples below contain a fixed source name:
+SQL Workspace does not read your local `.env`. Check `LOGIN_TOPIC`, then replace
+`"avro.security.login_events"` with `"avro.<your LOGIN_TOPIC>"` in both
+[`sql/01_explore.sql`](sql/01_explore.sql) and
+[`sql/02_login_failures.sql`](sql/02_login_failures.sql), and in any query copied
+from this page. For example, `LOGIN_TOPIC=security.team07_logins` requires
+`FROM "avro.security.team07_logins"`. Keep the double quotes around the entire
+source name and confirm that SQL Workspace imported that topic as an Avro source.
+Keep the `login_failures` view name: L3/L4 query that view.
 
 **1. Peek at the stream** ([`sql/01_explore.sql`](sql/01_explore.sql)). Each row
 is one login attempt. The topic name contains dots, so it's double-quoted.
@@ -228,8 +285,10 @@ event landed in Kafka, the view updated itself, and the agent read the view.
 - `mcp_servers`: the StreamNative MCP server for your SQL Workspace.
 - `tools`: an allow-list. Two read-only tools run without asking
   (`always_allow`); every other tool on that server is disabled.
-- A **vault**: the MCP server's credential (your team key) is stored server-side.
-  The session references the vault by id, so the key never enters the prompt.
+- A **vault**: the MCP server's OAuth credential is created through `ork` and
+  stored server-side. Approve the browser login on the first run. The session
+  references the vault by id, so tokens never enter the prompt. Later runs reuse
+  the credential without another browser login.
 
 <details>
 <summary>The code (Python)</summary>
@@ -238,7 +297,7 @@ event landed in Kafka, the view updated itself, and the agent read the view.
 layer = load_layer("l3-live-context")
 agent = ensure_agent(client, state, agent_params(layer, config))
 
-vault_id = ensure_vault(client, state, f"hello-vault-{config.participant}", config["SN_MCP_URL"], config["SN_API_KEY"])
+vault_id = ensure_vault(client, state, f"hello-vault-{config.participant}", config)
 session = client.sessions.create(
     environment_id=environment_id,
     agent={"type": "agent", "id": agent.id, "version": agent.version},
@@ -256,7 +315,7 @@ chat(client, session.id, QUESTION)
 const layer = loadLayer('l3-live-context');
 const agent = await ensureAgent(client, state, agentParams(layer, config));
 
-const vaultId = await ensureVault(client, state, `hello-vault-${config.participant}`, config.get('SN_MCP_URL'), config.get('SN_API_KEY'));
+const vaultId = await ensureVault(client, state, `hello-vault-${config.participant}`, config);
 const session = await client.sessions.create({
   environment_id: environmentId,
   agent: { type: 'agent', id: agent.id, version: agent.version },
@@ -278,7 +337,8 @@ ork agent update "$AGENT_ID" --version 1 --model "$ORCA_MODEL" \
 
 ork agent vaults create --display-name hello-vault-ana -o json
 ork agent vaults credentials create --vault "$VAULT_ID" --display-name streamnative-mcp \
-  --auth-json '{"type":"static_bearer","mcp_server_url":"<SN_MCP_URL>","token":"<SN_API_KEY>"}'
+  --mcp-server-url "$SN_MCP_URL" \
+  --oauth-scope "$SN_MCP_OAUTH_SCOPE" -o json
 
 ork agent sessions create --agent "$AGENT_ID" --agent-version 2 \
   --environment-id "$ENVIRONMENT_ID" --vault-id "$VAULT_ID" --title "L3: live context" -o json
@@ -292,13 +352,22 @@ ork agent sessions create --agent "$AGENT_ID" --agent-version 2 \
 | `./l4_act.sh` | `python l4_act.py` | `npm run l4` |
 
 The agent (version 3) gets one write tool, and it can only use it with your
-approval. It queries the view, then proposes an insert, and the session pauses:
+approval. It queries the view, describes the flag table, and reads the database
+time before proposing an insert. The MCP insert tool requires every writable
+column, including nullable columns; it does not apply table defaults. The
+session pauses before the proposed row is written:
 
 ```
 [approve?] The agent wants to run sql_workspace_insert_rows with:
 {
+  "database": "<your database>",
+  "schema": "public",
   "table": "flagged_accounts",
-  "rows": [{"account_id": "acct_9…", "reason": "6 failed logins then a success from one new IP"}]
+  "rows": [{
+    "account_id": "acct_9…",
+    "reason": "6 failed logins then a success from one new IP",
+    "flagged_at": "2026-09-30T12:00:00Z"
+  }]
 }
 Allow it? [y/N]
 ```
@@ -309,11 +378,12 @@ Type `y`, then check in SQL Workspace:
 SELECT * FROM flagged_accounts;
 ```
 
-Ask again, and answer `n` this time. The agent is told a human denied the insert,
+Ask the agent to flag a different account, and answer `n` this time. The agent is told a human denied the insert,
 and it does not retry.
 
-**What changed** ([`agent/l4-act.json`](agent/l4-act.json)): one more tool,
-`sql_workspace_insert_rows`, with `permission_policy: always_ask`. When the agent
+**What changed** ([`agent/l4-act.json`](agent/l4-act.json)): the read-only
+`sql_workspace_describe_table` checks the required columns, and
+`sql_workspace_insert_rows` uses `permission_policy: always_ask`. When the agent
 calls it, the session emits `agent.mcp_tool_use` and goes idle with
 `stop_reason: requires_action`. Your script answers with a
 `user.tool_confirmation`: `allow`, or `deny` with a reason. On the CLI that is:
@@ -341,9 +411,10 @@ action, and you have your hackathon project. Ideas and next steps:
 | Doctor: `Agent Engine HTTP 401/403` | The key was rejected. A key created before its permissions must be re-created: ask a facilitator. |
 | Doctor: `Kafka ... authentication` | `SN_SERVICE_ACCOUNT` must be the full principal, `<name>@<org>.auth.streamnative.cloud`; `SN_API_KEY` is the raw key. |
 | The login topic isn't listed in SQL Workspace | Only topics with a registered Avro schema appear. Ask a facilitator. |
-| `relation "avro.security.login_events" does not exist` | Select your team's database, and keep the double quotes around the name. |
+| `relation "avro.security.login_events" does not exist` | Select your team's database and update the quoted Avro source in both L2 SQL files to match `LOGIN_TOPIC` in `.env`. |
 | The agent can't find `login_failures` | Create the view in your team's database (L2, step 2); the agent looks it up there. |
-| `[error]` lines from MCP tools in L3 | Check `SN_MCP_URL` against your team card, then rerun the doctor. |
+| `[error]` lines from MCP tools in L3 | Check `SN_MCP_URL` and `SN_MCP_AUTH`, finish the OAuth login, then rerun the doctor. |
+| OAuth issuer mismatch / unsupported client authentication | Use current `ork` main or PR #8 and leave `SN_MCP_OAUTH_ISSUER` empty for StreamNative discovery. An explicit issuer must match an advertised authorization server. `--oauth-allow-issuer-mismatch` is only for trusted servers whose metadata issuer crosses registrable domains; StreamNative does not need it. |
 | `Cannot reach the Agent Engine` | `ORCA_BASE_URL` must be the host root from your card, with no `/v1`. |
 | The agent answers from memory instead of querying | Ask again, "check the view first". The system prompt tells it to always query. |
 
@@ -353,8 +424,9 @@ action, and you have your hackathon project. Ideas and next steps:
 |---|---|---|
 | `./cleanup.sh` | `python cleanup.py` | `npm run cleanup` |
 
-This archives your agent and deletes your vault and environment. To start L2
-over, run [`sql/99_reset.sql`](sql/99_reset.sql).
+This archives your agent and environment, and deletes your vault. An environment
+with session history cannot be deleted; archiving keeps that history available.
+To start L2 over, run [`sql/99_reset.sql`](sql/99_reset.sql).
 
 ## What's in this repository
 

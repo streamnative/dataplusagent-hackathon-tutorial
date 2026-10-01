@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { APIConnectionError, AuthenticationError } from '@runorca/orca-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ConfigError, State, TurnError, askHuman, chat, cleanup, ensureAgent, ensureEnvironment, ensureVault, runMain } from '../src/common.js';
+import { Config, ConfigError, State, TurnError, askHuman, chat, cleanup, ensureAgent, ensureEnvironment, ensureVault, runMain } from '../src/common.js';
 import { FakeSessionEvents, clientWithEvents, fakeClient, type RawEvent } from './fakes.js';
 import { MCP_URL, params } from './helpers.js';
 
@@ -57,18 +57,19 @@ describe('askHuman', () => {
 });
 
 describe('cleanup', () => {
-  it('archives the agent, deletes the rest, and forgets the ids', async () => {
+  it('archives the agent and environment, deletes the vault, and forgets the ids', async () => {
     const client = fakeClient();
     const dir = mkdtempSync(join(tmpdir(), 'hello-state-'));
     const state = new State(join(dir, 'jane.json'));
     const agent = await ensureAgent(client, state, params('l1-hello'));
     const environmentId = await ensureEnvironment(client, state, 'hello-env-jane');
-    const vaultId = await ensureVault(client, state, 'hello-vault-jane', MCP_URL, 'key');
+    const vaultId = await ensureVault(client, state, 'hello-vault-jane', new Config({ SN_MCP_AUTH: 'static_bearer', SN_MCP_URL: MCP_URL, SN_API_KEY: 'key' }, 'jane'));
 
     await cleanup(client, state, { out: quiet });
 
     expect(client.agents.store.get(agent.id)!.archived_at).not.toBeNull();
-    expect(client.environments.store.has(environmentId)).toBe(false);
+    expect(client.environments.store.get(environmentId)!.archived_at).not.toBeNull();
+    expect(client.environments.calls).not.toContainEqual(['delete', environmentId]);
     expect(client.vaults.store.has(vaultId)).toBe(false);
     expect(existsSync(join(dir, 'jane.json'))).toBe(false);
   });

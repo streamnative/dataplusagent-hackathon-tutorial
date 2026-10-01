@@ -188,8 +188,14 @@ ensure_environment() {  # ensure_environment <name>
 
 # Sets VAULT_ID: a vault holding the credential the agent uses to call the MCP
 # server. The token stays in the vault; it never enters a prompt (or your terminal).
-ensure_vault() {  # ensure_vault <name> <mcp url> <token>
-  local json credentials auth
+ensure_vault() {  # ensure_vault <name>
+  local json credentials auth auth_type credential_id
+  local -a oauth_args
+  case "${SN_MCP_AUTH:-oauth}" in
+    oauth) auth_type=mcp_oauth ;;
+    static_bearer) auth_type=static_bearer; hello_require SN_API_KEY ;;
+    *) hello_die "SN_MCP_AUTH must be oauth or static_bearer." ;;
+  esac
   VAULT_ID=$(state_get vault_id)
   if [ -z "$VAULT_ID" ] || ! ork_get_live agent vaults get "$VAULT_ID"; then
     json=$(ork_json agent vaults create --display-name "$1") || ork_fail
@@ -197,11 +203,25 @@ ensure_vault() {  # ensure_vault <name> <mcp url> <token>
     state_set vault_id "$VAULT_ID"
   fi
   credentials=$(ork_json agent vaults credentials list --vault "$VAULT_ID") || ork_fail
-  if ! jq -e --arg url "$2" '[(.data? // .)[]? | select(.auth.mcp_server_url == $url and .archived_at == null)] | length > 0' \
+  if ! jq -e --arg url "$SN_MCP_URL" --arg type "$auth_type" '[(.data? // .)[]? | select(.auth.mcp_server_url == $url and .auth.type == $type and .archived_at == null)] | length > 0' \
     <<<"$credentials" >/dev/null; then
-    auth=$(jq -cn --arg url "$2" --arg token "$3" '{type: "static_bearer", mcp_server_url: $url, token: $token}')
-    ork_json agent vaults credentials create --vault "$VAULT_ID" --display-name streamnative-mcp --auth-json "$auth" \
-      >/dev/null || ork_fail
+    # Registry permits one active credential per MCP URL: retire the old auth mode.
+    while IFS= read -r credential_id; do
+      [ -z "$credential_id" ] || ork agent vaults credentials archive "$credential_id" --vault "$VAULT_ID" >/dev/null ||
+        hello_die "Cannot archive the previous MCP credential. Check the ork error above."
+    done < <(jq -r --arg url "$SN_MCP_URL" '(.data? // .)[]? | select(.auth.mcp_server_url == $url and .archived_at == null) | .id' <<<"$credentials")
+    if [ "$auth_type" = mcp_oauth ]; then
+      oauth_args=(--vault "$VAULT_ID" --display-name streamnative-mcp --mcp-server-url "$SN_MCP_URL")
+      [ -z "${SN_MCP_OAUTH_ISSUER:-}" ] || oauth_args+=(--oauth-issuer "$SN_MCP_OAUTH_ISSUER")
+      [ -z "${SN_MCP_OAUTH_SCOPE:-}" ] || oauth_args+=(--oauth-scope "$SN_MCP_OAUTH_SCOPE")
+      # Keep the browser URL and callback progress visible; tokens go directly to the vault.
+      ork agent vaults credentials create "${oauth_args[@]}" -o json ||
+        hello_die "MCP OAuth authorization failed. Check the ork error above; normally leave SN_MCP_OAUTH_ISSUER empty for discovery, then rerun L3/L4."
+    else
+      auth=$(jq -cn --arg url "$SN_MCP_URL" --arg token "$SN_API_KEY" '{type: "static_bearer", mcp_server_url: $url, token: $token}')
+      ork_json agent vaults credentials create --vault "$VAULT_ID" --display-name streamnative-mcp --auth-json "$auth" \
+        >/dev/null || ork_fail
+    fi
   fi
 }
 

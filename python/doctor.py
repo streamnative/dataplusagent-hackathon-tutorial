@@ -2,6 +2,7 @@
 
     python doctor.py             # laptop + .env + Agent Engine + Kafka + Schema Registry + MCP
     python doctor.py --offline   # laptop only (run this before the event)
+    python doctor.py --agent-only  # laptop + Agent Engine (for ork local / L1)
 
 Every failed check prints the fix.
 """
@@ -18,7 +19,7 @@ from urllib.parse import urlsplit
 
 CARD = ("SN_API_KEY", "SN_SERVICE_ACCOUNT", "ORCA_BASE_URL", "KAFKA_BOOTSTRAP_SERVERS", "SCHEMA_REGISTRY_URL", "SN_MCP_URL", "LOGIN_TOPIC", "ORCA_MODEL")
 SQL_FIELDS = ("account_id", "event_time", "ip_address", "result", "failure_reason")
-MCP_TOOLS = ("sql_workspace_list_databases", "sql_workspace_query", "sql_workspace_insert_rows")
+MCP_TOOLS = ("sql_workspace_list_databases", "sql_workspace_query", "sql_workspace_describe_table", "sql_workspace_insert_rows")
 PACKAGES = {"orca": "runorca", "confluent_kafka": "confluent-kafka[avro]", "dotenv": "python-dotenv"}
 
 
@@ -40,9 +41,10 @@ def check_python(version: tuple) -> Check:
 
 def check_orca_base_url(url: str) -> Check:
     parts = urlsplit(url.strip())
-    if parts.scheme != "https" or not parts.netloc:
-        return Check("ORCA_BASE_URL", False, url, "Use the full https:// registry endpoint from your team card.")
-    root = f"https://{parts.netloc}"
+    local_http = parts.scheme == "http" and parts.hostname in ("localhost", "127.0.0.1", "::1")
+    if not parts.netloc or (parts.scheme != "https" and not local_http):
+        return Check("ORCA_BASE_URL", False, url, "Use the https:// registry endpoint from your team card, or http://127.0.0.1:8080 for ork local.")
+    root = f"{parts.scheme}://{parts.netloc}"
     if parts.path.rstrip("/"):
         return Check("ORCA_BASE_URL", False, url, f"Use the host root only: ORCA_BASE_URL={root}")
     return Check("ORCA_BASE_URL", True, root)
@@ -98,18 +100,20 @@ def kafka_hint(error: str) -> str:
 # ---------------------------------------------------------------- probes --
 
 
-def check_packages() -> list[Check]:
+def check_packages(agent_only: bool = False) -> list[Check]:
     checks = []
     for module, package in PACKAGES.items():
+        if agent_only and module == "confluent_kafka":
+            continue
         found = importlib.util.find_spec(module) is not None
         checks.append(Check(f"package {package}", found, "", "" if found else "Run: pip install -r requirements.txt"))
     return checks
 
 
 def check_cli_tools() -> list[Check]:
-    """Only the CLI path needs these, so a missing tool is reported but never fails."""
+    """ork is needed for first OAuth login; jq is only needed by the CLI path."""
     return [
-        Check(f"{tool} (CLI path only)", True, "found" if shutil.which(tool) else "not found: fine unless you take the CLI path")
+        Check(tool, True, "found" if shutil.which(tool) else ("not found: install before first OAuth MCP login" if tool == "ork" else "not found: CLI path only"))
         for tool in ("ork", "jq")
     ]
 
@@ -123,7 +127,7 @@ def probe_orca(config: Any) -> Check:
         orca_client(config).agents.list(limit=1)
     except APIStatusError as err:
         if err.status_code in (401, 403):
-            fix = "The Agent Engine rejected SN_API_KEY. A key created before its rolebinding must be re-created: ask a facilitator."
+            fix = "The Agent Engine rejected the key. For ork local use its generated workspace key as ORCA_API_KEY; for a team card check SN_API_KEY and its rolebinding."
         elif err.status_code == 404:
             fix = "ORCA_BASE_URL is not an Agent Engine registry: copy the registry endpoint from your team card."
         else:
@@ -151,7 +155,8 @@ def probe_kafka(config: Any) -> Check:
     )
     topic_name = config["LOGIN_TOPIC"]
     try:
-        topic = admin.list_topics(topic=topic_name, timeout=15).topics.get(topic_name)
+        # Listing all existing topics avoids metadata requests that can auto-create a missing topic.
+        topic = admin.list_topics(timeout=15).topics.get(topic_name)
     except KafkaException as err:
         reason = errors[0] if errors else str(err)
         return Check("Kafka", False, reason, kafka_hint(reason))
@@ -208,26 +213,50 @@ def mcp_tool_names(url: str, token: str) -> list[str]:
     return names
 
 
-def probe_mcp(config: Any) -> Check:
+def probe_mcp(config: Any, *, client: Any = None, state: Any = None) -> Check:
+    from common import mcp_auth_type, orca_client, state_for
+
     try:
+        if mcp_auth_type(config) == "mcp_oauth":
+            client = client or orca_client(config)
+            state = state or state_for(config)
+            vault_id = state.get("vault_id")
+            fix = "Run L3 to create the MCP OAuth credential with ork, then rerun doctor."
+            if not vault_id:
+                return Check("MCP OAuth", False, "no tutorial vault yet", fix)
+            credentials = client.vaults.credentials.list(vault_id).data
+            credential = next((c for c in credentials if c.auth.type == "mcp_oauth"
+                               and c.auth.mcp_server_url == config["SN_MCP_URL"] and not c.archived_at), None)
+            if credential is None:
+                return Check("MCP OAuth", False, "no matching OAuth credential", fix)
+            result = client.vaults.credentials.validate(vault_id, credential.id)
+            ok = result.status == "valid"
+            if result.status == "unknown":
+                fix = "The MCP probe was inconclusive. Check Registry/MCP connectivity and rerun doctor; keep the existing credential."
+            elif result.status == "invalid":
+                fix = f"Reauthorize: ork agent vaults credentials archive {credential.id} --vault {vault_id}, then rerun L3/L4."
+            return Check("MCP OAuth", ok, f"{result.status}: MCP initialization; SQL tools checked in L3/L4", "" if ok else fix)
         names = mcp_tool_names(config["SN_MCP_URL"], config["SN_API_KEY"])
     except Exception as err:  # HTTP errors, JSON-RPC errors, timeouts
-        return Check("MCP server", False, str(err), "Check SN_MCP_URL, and that MCP is enabled for your key: ask a facilitator.")
+        return Check("MCP server", False, str(err), "Check SN_MCP_URL and SN_MCP_AUTH; for OAuth, finish the L3 browser login and verify the vault credential.")
     return check_mcp_tools(names)
 
 
 # ------------------------------------------------------------------ main --
 
 
-def run_checks(offline: bool) -> list[Check]:
-    checks = [check_python(sys.version_info), *check_packages(), *check_cli_tools()]
+def run_checks(offline: bool, agent_only: bool = False) -> list[Check]:
+    checks = [check_python(sys.version_info), *check_packages(agent_only), *check_cli_tools()]
     if offline or not all(check.ok for check in checks):
         return checks
 
     from common import load_config
 
     config = load_config([])
-    missing = [name for name in CARD if name not in config.values]
+    required = ("ORCA_BASE_URL", "ORCA_MODEL") if agent_only else CARD
+    missing = [name for name in required if name not in config.values]
+    if agent_only and not any(name in config.values for name in ("ORCA_API_KEY", "SN_API_KEY")):
+        missing.append("ORCA_API_KEY or SN_API_KEY")
     if missing:
         fix = "Copy .env.example to .env in the repo root and paste your team card."
         return [*checks, Check("team card (.env)", False, "missing " + ", ".join(missing), fix)]
@@ -237,6 +266,8 @@ def run_checks(offline: bool) -> list[Check]:
     checks.append(base_url)
     if base_url.ok:
         checks.append(probe_orca(config))
+    if agent_only:
+        return checks
     checks.append(probe_kafka(config))
     checks += probe_schema_registry(config)
     checks.append(probe_mcp(config))
@@ -244,7 +275,7 @@ def run_checks(offline: bool) -> list[Check]:
 
 
 def main() -> int:
-    checks = run_checks(offline="--offline" in sys.argv[1:])
+    checks = run_checks(offline="--offline" in sys.argv[1:], agent_only="--agent-only" in sys.argv[1:])
     for check in checks:
         print(f"{'PASS' if check.ok else 'FAIL'}  {check.name:<32} {check.detail}")
         if not check.ok and check.fix:

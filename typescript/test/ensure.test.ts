@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { State, ensureAgent, ensureEnvironment, ensureVault } from '../src/common.js';
+import { Config, State, ensureAgent, ensureEnvironment, ensureVault } from '../src/common.js';
 import { fakeClient, makeAgent } from './fakes.js';
 import { MCP_URL, params } from './helpers.js';
 
@@ -98,7 +98,7 @@ describe('ensureVault', () => {
   it('gets one bearer credential for the MCP server', async () => {
     const client = fakeClient();
 
-    const vaultId = await ensureVault(client, state, 'hello-vault-jane', MCP_URL, 'the-api-key');
+    const vaultId = await ensureVault(client, state, 'hello-vault-jane', new Config({ SN_MCP_AUTH: 'static_bearer', SN_MCP_URL: MCP_URL, SN_API_KEY: 'the-api-key' }, 'jane'));
 
     expect(client.vaults.credentials.calls.filter((c) => c[0] === 'create')).toEqual([
       ['create', vaultId, { type: 'static_bearer', mcp_server_url: MCP_URL, token: 'the-api-key' }, 'streamnative-mcp'],
@@ -107,9 +107,9 @@ describe('ensureVault', () => {
 
   it('reuses an existing credential for the same server', async () => {
     const client = fakeClient();
-    const first = await ensureVault(client, state, 'hello-vault-jane', MCP_URL, 'the-api-key');
+    const first = await ensureVault(client, state, 'hello-vault-jane', new Config({ SN_MCP_AUTH: 'static_bearer', SN_MCP_URL: MCP_URL, SN_API_KEY: 'the-api-key' }, 'jane'));
 
-    const second = await ensureVault(client, state, 'hello-vault-jane', MCP_URL, 'the-api-key');
+    const second = await ensureVault(client, state, 'hello-vault-jane', new Config({ SN_MCP_AUTH: 'static_bearer', SN_MCP_URL: MCP_URL, SN_API_KEY: 'the-api-key' }, 'jane'));
 
     expect(first).toBe(second);
     expect(client.vaults.credentials.calls.filter((c) => c[0] === 'create')).toHaveLength(1);
@@ -117,9 +117,9 @@ describe('ensureVault', () => {
 
   it('gives a new MCP URL its own credential', async () => {
     const client = fakeClient();
-    await ensureVault(client, state, 'hello-vault-jane', MCP_URL, 'the-api-key');
+    await ensureVault(client, state, 'hello-vault-jane', new Config({ SN_MCP_AUTH: 'static_bearer', SN_MCP_URL: MCP_URL, SN_API_KEY: 'the-api-key' }, 'jane'));
 
-    await ensureVault(client, state, 'hello-vault-jane', `${MCP_URL}-v2`, 'the-api-key');
+    await ensureVault(client, state, 'hello-vault-jane', new Config({ SN_MCP_AUTH: 'static_bearer', SN_MCP_URL: `${MCP_URL}-v2`, SN_API_KEY: 'the-api-key' }, 'jane'));
 
     const urls = client.vaults.credentials.calls
       .filter((c) => c[0] === 'create')

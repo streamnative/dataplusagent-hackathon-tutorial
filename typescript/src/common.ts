@@ -5,6 +5,7 @@
  * leaning on these helpers. Read those first; come here when you want the details.
  */
 
+import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -211,7 +212,7 @@ export interface Client {
   environments: {
     create(params: EnvironmentCreateParams): Promise<Environment>;
     retrieve(environmentId: string): Promise<Environment>;
-    delete(environmentId: string): Promise<unknown>;
+    archive(environmentId: string): Promise<Environment>;
   };
   vaults: {
     create(params: VaultCreateParams): Promise<Vault>;
@@ -220,6 +221,7 @@ export interface Client {
     credentials: {
       list(vaultId: string): Promise<{ data: VaultCredential[] }>;
       create(vaultId: string, params: CredentialCreateParams): Promise<VaultCredential>;
+      archive(vaultId: string, credentialId: string): Promise<VaultCredential>;
     };
   };
   sessions: {
@@ -228,9 +230,14 @@ export interface Client {
   };
 }
 
-/** One service-account API key, sent as a Bearer token, authenticates everything. */
-export function orcaClient(config: Config): Client {
-  return new Orca({ baseURL: config.get('ORCA_BASE_URL'), apiKey: config.get('SN_API_KEY'), timeout: 600_000 });
+/** Use a Registry workspace key locally, or the team card's hosted Bearer key. */
+export function orcaClient(config: Config): Orca {
+  const baseURL = config.get('ORCA_BASE_URL');
+  if (config.has('ORCA_API_KEY')) {
+    return new Orca({ baseURL, apiKey: null, defaultHeaders: { 'x-api-key': config.get('ORCA_API_KEY') }, timeout: 600_000 });
+  }
+  if (config.has('SN_API_KEY')) return new Orca({ baseURL, apiKey: config.get('SN_API_KEY'), timeout: 600_000 });
+  throw new ConfigError('Set ORCA_API_KEY for ork local, or SN_API_KEY from your team card.');
 }
 
 /** The sandbox your sessions run in. Created once, then reused. */
@@ -271,23 +278,59 @@ export async function ensureVault(
   client: Pick<Client, 'vaults'>,
   state: State,
   name: string,
-  mcpUrl: string,
-  token: string,
+  config: Config,
 ): Promise<string> {
+  const authType = mcpAuthType(config);
+  const mcpUrl = config.get('SN_MCP_URL');
+  if (authType === 'static_bearer' && !config.has('SN_API_KEY')) throw new ConfigError('SN_MCP_AUTH=static_bearer requires SN_API_KEY.');
   let vault = await live((id) => client.vaults.retrieve(id), state.get('vault_id'));
   if (!vault) {
     vault = await client.vaults.create({ display_name: name });
     state.set('vault_id', vault.id);
   }
   const { data: credentials } = await client.vaults.credentials.list(vault.id);
-  const hasCredential = credentials.some((c) => 'mcp_server_url' in c.auth && c.auth.mcp_server_url === mcpUrl && !c.archived_at);
+  const hasCredential = credentials.some((c) => 'mcp_server_url' in c.auth && c.auth.mcp_server_url === mcpUrl && c.auth.type === authType && !c.archived_at);
   if (!hasCredential) {
-    await client.vaults.credentials.create(vault.id, {
-      display_name: 'streamnative-mcp',
-      auth: { type: 'static_bearer', mcp_server_url: mcpUrl, token },
-    });
+    // Registry permits only one active credential per MCP URL in a vault.
+    for (const credential of credentials) {
+      if ('mcp_server_url' in credential.auth && credential.auth.mcp_server_url === mcpUrl && !credential.archived_at) {
+        await client.vaults.credentials.archive(vault.id, credential.id);
+      }
+    }
+    if (authType === 'mcp_oauth') {
+      authorizeMcp(vault.id, config);
+    } else {
+      await client.vaults.credentials.create(vault.id, {
+        display_name: 'streamnative-mcp',
+        auth: { type: 'static_bearer', mcp_server_url: mcpUrl, token: config.get('SN_API_KEY') },
+      });
+    }
   }
   return vault.id;
+}
+
+export function mcpAuthType(config: Config): 'mcp_oauth' | 'static_bearer' {
+  const mode = config.has('SN_MCP_AUTH') ? config.get('SN_MCP_AUTH') : 'oauth';
+  if (mode !== 'oauth' && mode !== 'static_bearer') throw new ConfigError('SN_MCP_AUTH must be oauth or static_bearer.');
+  return mode === 'oauth' ? 'mcp_oauth' : 'static_bearer';
+}
+
+/** ork owns discovery, browser login, PKCE and server-side token storage. */
+export function authorizeMcp(vaultId: string, config: Config): void {
+  const args = ['agent', 'vaults', 'credentials', 'create', '--vault', vaultId,
+    '--display-name', 'streamnative-mcp', '--mcp-server-url', config.get('SN_MCP_URL'), '-o', 'json'];
+  for (const [name, flag] of [['SN_MCP_OAUTH_ISSUER', '--oauth-issuer'], ['SN_MCP_OAUTH_SCOPE', '--oauth-scope']]) {
+    if (config.has(name)) args.push(flag, config.get(name));
+  }
+  const env: NodeJS.ProcessEnv = { ...process.env, ORCA_REGISTRY_URL: config.get('ORCA_BASE_URL') };
+  delete env.ORCA_API_KEY;
+  delete env.ORCA_ACCESS_TOKEN;
+  if (config.has('ORCA_API_KEY')) env.ORCA_API_KEY = config.get('ORCA_API_KEY');
+  else env.ORCA_ACCESS_TOKEN = config.get('SN_API_KEY');
+  // No shell and no credentials in argv; OAuth tokens are never read by this script.
+  const result = spawnSync('ork', args, { env, stdio: 'inherit' });
+  if (result.error) throw new ConfigError('Install ork with MCP OAuth proxy support and put it on PATH (see docs/before-you-arrive.md).');
+  if (result.status !== 0) throw new ConfigError('MCP OAuth authorization failed. Check the ork error above; normally leave SN_MCP_OAUTH_ISSUER empty for discovery, then rerun L3/L4.');
 }
 
 /** The remembered resource, or null if it was never created, deleted, or archived. */
@@ -348,7 +391,7 @@ export async function askHuman(toolUse: ToolUse, { ask = prompt, out = console.l
   return ['y', 'yes'].includes((await ask('Allow it? [y/N] ')).trim().toLowerCase());
 }
 
-/** Remove what the scripts created. Agents cannot be deleted, only archived. */
+/** Archive the agent and environment, and delete the vault. Sessions reserve the environment. */
 export async function cleanup(
   client: Pick<Client, 'agents' | 'environments' | 'vaults'>,
   state: State,
@@ -357,7 +400,7 @@ export async function cleanup(
   const steps: Array<[string, string, (id: string) => Promise<unknown>]> = [
     ['agent', 'agent_id', (id) => client.agents.archive(id)],
     ['vault', 'vault_id', (id) => client.vaults.delete(id)],
-    ['environment', 'environment_id', (id) => client.environments.delete(id)],
+    ['environment', 'environment_id', (id) => client.environments.archive(id)],
   ];
   for (const [label, key, remove] of steps) {
     const resourceId = state.get(key);

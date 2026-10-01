@@ -57,7 +57,7 @@ describe('checkLoginSchema', () => {
 
 describe('checkMcpTools', () => {
   it('the MCP server must offer the three tools the agent uses', () => {
-    const tools = ['sql_workspace_list_databases', 'sql_workspace_query', 'sql_workspace_insert_rows', 'sncloud_context_whoami'];
+    const tools = ['sql_workspace_list_databases', 'sql_workspace_query', 'sql_workspace_describe_table', 'sql_workspace_insert_rows', 'sncloud_context_whoami'];
 
     expect(checkMcpTools(tools).ok).toBe(true);
   });
@@ -118,5 +118,20 @@ describe('errorText', () => {
 
   it('keeps a plain error message as it is', () => {
     expect(errorText(new Error('HTTP 401: unauthorized'))).toBe('HTTP 401: unauthorized');
+  });
+});
+
+
+describe('local Agent Engine URL', () => {
+  it.each(['127.0.0.1', 'localhost', '[::1]'])('accepts loopback HTTP on %s', (host) => {
+    expect(checkOrcaBaseUrl(`http://${host}:8080`).ok).toBe(true);
+  });
+  it('still requires HTTPS for a non-local host', () => {
+    expect(checkOrcaBaseUrl('http://ws.example.com').ok).toBe(false);
+  });
+  it('suggests the local host root when a path was added', () => {
+    const result = checkOrcaBaseUrl('http://127.0.0.1:8080/v1');
+    expect(result.ok).toBe(false);
+    expect(result.fix).toContain('http://127.0.0.1:8080');
   });
 });

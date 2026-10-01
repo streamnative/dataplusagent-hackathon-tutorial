@@ -24,7 +24,7 @@ import {
 const REQUEST = 'Flag the account most likely to be under attack right now.';
 
 async function main(): Promise<void> {
-  const config = loadConfig(['ORCA_BASE_URL', 'SN_API_KEY', 'ORCA_MODEL', 'SN_MCP_URL']);
+  const config = loadConfig(['ORCA_BASE_URL', 'ORCA_MODEL', 'SN_MCP_URL']);
   const client = orcaClient(config);
   const state = stateFor(config);
   const environmentId = await ensureEnvironment(client, state, `hello-env-${config.participant}`);
@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   const agent = await ensureAgent(client, state, agentParams(layer, config));
   console.log(`${agent.name} v${agent.version}: ${layer.summary}`);
 
-  const vaultId = await ensureVault(client, state, `hello-vault-${config.participant}`, config.get('SN_MCP_URL'), config.get('SN_API_KEY'));
+  const vaultId = await ensureVault(client, state, `hello-vault-${config.participant}`, config);
   const session = await client.sessions.create({
     environment_id: environmentId,
     agent: { type: 'agent', id: agent.id, version: agent.version },

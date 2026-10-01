@@ -3,6 +3,7 @@
  *
  *     npm run doctor                 # laptop + .env + Agent Engine + Kafka + Schema Registry + MCP
  *     npm run doctor -- --offline    # laptop only (run this before the event)
+ *     npm run doctor -- --agent-only # laptop + Agent Engine (for ork local / L1)
  *
  * Every failed check prints the fix.
  */
@@ -11,12 +12,13 @@ import { existsSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import type { Config } from './common.js';
+import type Orca from '@runorca/orca-sdk';
+import type { Config, State } from './common.js';
 
 const TS_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CARD = ['SN_API_KEY', 'SN_SERVICE_ACCOUNT', 'ORCA_BASE_URL', 'KAFKA_BOOTSTRAP_SERVERS', 'SCHEMA_REGISTRY_URL', 'SN_MCP_URL', 'LOGIN_TOPIC', 'ORCA_MODEL'];
 const SQL_FIELDS = ['account_id', 'event_time', 'ip_address', 'result', 'failure_reason'];
-const MCP_TOOLS = ['sql_workspace_list_databases', 'sql_workspace_query', 'sql_workspace_insert_rows'];
+const MCP_TOOLS = ['sql_workspace_list_databases', 'sql_workspace_query', 'sql_workspace_describe_table', 'sql_workspace_insert_rows'];
 const PACKAGES = ['@runorca/orca-sdk', 'kafkajs', '@kafkajs/confluent-schema-registry', 'dotenv'];
 
 export interface Check {
@@ -45,10 +47,11 @@ export function checkOrcaBaseUrl(url: string): Check {
   } catch {
     // not a URL at all
   }
-  if (!parsed || parsed.protocol !== 'https:' || !parsed.host) {
-    return check('ORCA_BASE_URL', false, url, 'Use the full https:// registry endpoint from your team card.');
+  const localHttp = parsed?.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+  if (!parsed || !parsed.host || (parsed.protocol !== 'https:' && !localHttp)) {
+    return check('ORCA_BASE_URL', false, url, 'Use the https:// registry endpoint from your team card, or http://127.0.0.1:8080 for ork local.');
   }
-  const root = `https://${parsed.host}`;
+  const root = `${parsed.protocol}//${parsed.host}`;
   if (parsed.pathname.replace(/\/+$/, '')) {
     return check('ORCA_BASE_URL', false, url, `Use the host root only: ORCA_BASE_URL=${root}`);
   }
@@ -116,28 +119,29 @@ export function kafkaHint(error: string): string {
 
 // ---------------------------------------------------------------- probes --
 
-function checkPackages(): Check[] {
-  return PACKAGES.map((pkg) => {
+function checkPackages(agentOnly = false): Check[] {
+  return PACKAGES.filter((pkg) => !agentOnly || ['@runorca/orca-sdk', 'dotenv'].includes(pkg)).map((pkg) => {
     const found = existsSync(join(TS_ROOT, 'node_modules', pkg, 'package.json'));
     return check(`package ${pkg}`, found, '', found ? '' : 'Run: npm install');
   });
 }
 
-/** Only the CLI path needs these, so a missing tool is reported but never fails. */
+/** ork is needed for first OAuth login; jq is only needed by the CLI path. */
 function checkCliTools(): Check[] {
   const onPath = (tool: string) =>
     (process.env.PATH ?? '')
       .split(delimiter)
       .some((dir) => dir && ['', '.exe', '.cmd'].some((ext) => existsSync(join(dir, tool + ext))));
   return ['ork', 'jq'].map((tool) =>
-    check(`${tool} (CLI path only)`, true, onPath(tool) ? 'found' : 'not found: fine unless you take the CLI path'),
+    check(tool, true, onPath(tool) ? 'found' : (tool === 'ork' ? 'not found: install before first OAuth MCP login' : 'not found: CLI path only')),
   );
 }
 
 async function probeOrca(config: Config): Promise<Check> {
-  const { default: Orca, APIConnectionError, APIError } = await import('@runorca/orca-sdk');
+  const { APIConnectionError, APIError } = await import('@runorca/orca-sdk');
+  const { orcaClient } = await import('./common.js');
   try {
-    await new Orca({ baseURL: config.get('ORCA_BASE_URL'), apiKey: config.get('SN_API_KEY'), timeout: 30_000 }).agents.list({ limit: 1 });
+    await orcaClient(config).agents.list({ limit: 1 }, { timeout: 30_000 });
   } catch (err) {
     // A connection error is also an APIError, so check it first.
     if (err instanceof APIConnectionError) {
@@ -146,7 +150,7 @@ async function probeOrca(config: Config): Promise<Check> {
     if (err instanceof APIError && err.status) {
       let fix = 'Ask a facilitator.';
       if (err.status === 401 || err.status === 403) {
-        fix = 'The Agent Engine rejected SN_API_KEY. A key created before its rolebinding must be re-created: ask a facilitator.';
+        fix = 'The Agent Engine rejected the key. For ork local use its generated workspace key as ORCA_API_KEY; for a team card check SN_API_KEY and its rolebinding.';
       } else if (err.status === 404) {
         fix = 'ORCA_BASE_URL is not an Agent Engine registry: copy the registry endpoint from your team card.';
       }
@@ -176,7 +180,8 @@ async function probeKafka(config: Config): Promise<Check> {
   }).admin();
   try {
     await admin.connect();
-    const { topics } = await admin.fetchTopicMetadata({ topics: [topicName] });
+    // Listing existing topics avoids auto-creating a missing topic during preflight.
+    const { topics } = await admin.fetchTopicMetadata();
     const topic = topics.find((t) => t.name === topicName);
     if (!topic) return check('Kafka', false, `${topicName}: not found`, kafkaHint('not found'));
     return check('Kafka', true, `${topicName} has ${topic.partitions.length} partition(s)`);
@@ -244,25 +249,43 @@ async function mcpToolNames(url: string, token: string): Promise<string[]> {
   return names;
 }
 
-async function probeMcp(config: Config): Promise<Check> {
+export async function probeMcp(config: Config, client?: Pick<Orca, 'vaults'>, state?: State): Promise<Check> {
+  const { mcpAuthType, orcaClient, stateFor } = await import('./common.js');
   let names: string[];
   try {
+    if (mcpAuthType(config) === 'mcp_oauth') {
+      client ??= orcaClient(config);
+      state ??= stateFor(config);
+      const vaultId = state.get('vault_id');
+      let fix = 'Run L3 to create the MCP OAuth credential with ork, then rerun doctor.';
+      if (!vaultId) return check('MCP OAuth', false, 'no tutorial vault yet', fix);
+      const { data } = await client.vaults.credentials.list(vaultId);
+      const credential = data.find((c) => c.auth.type === 'mcp_oauth' && c.auth.mcp_server_url === config.get('SN_MCP_URL') && !c.archived_at);
+      if (!credential) return check('MCP OAuth', false, 'no matching OAuth credential', fix);
+      const result = await client.vaults.credentials.validate(vaultId, credential.id);
+      const ok = result.status === 'valid';
+      if (result.status === 'unknown') fix = 'The MCP probe was inconclusive. Check Registry/MCP connectivity and rerun doctor; keep the existing credential.';
+      else if (result.status === 'invalid') fix = `Reauthorize: ork agent vaults credentials archive ${credential.id} --vault ${vaultId}, then rerun L3/L4.`;
+      return check('MCP OAuth', ok, `${result.status}: MCP initialization; SQL tools checked in L3/L4`, ok ? '' : fix);
+    }
     names = await mcpToolNames(config.get('SN_MCP_URL'), config.get('SN_API_KEY'));
   } catch (err) {
-    return check('MCP server', false, errorText(err), 'Check SN_MCP_URL, and that MCP is enabled for your key: ask a facilitator.');
+    return check('MCP server', false, errorText(err), 'Check SN_MCP_URL and SN_MCP_AUTH; for OAuth, finish the L3 browser login and verify the vault credential.');
   }
   return checkMcpTools(names);
 }
 
 // ------------------------------------------------------------------ main --
 
-export async function runChecks(offline: boolean): Promise<Check[]> {
-  const checks = [checkNode(process.versions.node), ...checkPackages(), ...checkCliTools()];
+export async function runChecks(offline: boolean, agentOnly = false): Promise<Check[]> {
+  const checks = [checkNode(process.versions.node), ...checkPackages(agentOnly), ...checkCliTools()];
   if (offline || !checks.every((c) => c.ok)) return checks;
 
   const { loadConfig } = await import('./common.js');
   const config = loadConfig([]);
-  const missing = CARD.filter((name) => !config.has(name));
+  const required = agentOnly ? ['ORCA_BASE_URL', 'ORCA_MODEL'] : CARD;
+  const missing = required.filter((name) => !config.has(name));
+  if (agentOnly && !config.has('ORCA_API_KEY') && !config.has('SN_API_KEY')) missing.push('ORCA_API_KEY or SN_API_KEY');
   if (missing.length > 0) {
     const fix = 'Copy .env.example to .env in the repo root and paste your team card.';
     return [...checks, check('team card (.env)', false, `missing ${missing.join(', ')}`, fix)];
@@ -272,6 +295,7 @@ export async function runChecks(offline: boolean): Promise<Check[]> {
   const baseUrl = checkOrcaBaseUrl(config.get('ORCA_BASE_URL'));
   checks.push(baseUrl);
   if (baseUrl.ok) checks.push(await probeOrca(config));
+  if (agentOnly) return checks;
   checks.push(await probeKafka(config));
   checks.push(...(await probeSchemaRegistry(config)));
   checks.push(await probeMcp(config));
@@ -279,7 +303,8 @@ export async function runChecks(offline: boolean): Promise<Check[]> {
 }
 
 async function main(): Promise<number> {
-  const checks = await runChecks(process.argv.slice(2).includes('--offline'));
+  const args = process.argv.slice(2);
+  const checks = await runChecks(args.includes('--offline'), args.includes('--agent-only'));
   for (const c of checks) {
     console.log(`${c.ok ? 'PASS' : 'FAIL'}  ${c.name.padEnd(32)} ${c.detail}`);
     if (!c.ok && c.fix) console.log(`      fix: ${c.fix}`);

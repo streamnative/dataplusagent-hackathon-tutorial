@@ -4,7 +4,7 @@ import httpx2
 import pytest
 from orca import AuthenticationError
 
-from common import ConfigError, State, TurnError, ask_human, chat, cleanup, ensure_agent, ensure_environment, ensure_vault, run_main
+from common import Config, ConfigError, State, TurnError, ask_human, chat, cleanup, ensure_agent, ensure_environment, ensure_vault, run_main
 from fakes import FakeSessionEvents, client_with_events, fake_client
 from test_ensure import MCP_URL, params
 
@@ -34,17 +34,18 @@ def test_the_human_must_type_yes_to_approve(typed, allowed):
     assert any("acct_9123" in line for line in shown)
 
 
-def test_cleanup_archives_the_agent_deletes_the_rest_and_forgets_the_ids(tmp_path):
+def test_cleanup_archives_the_agent_and_environment_deletes_the_vault_and_forgets_the_ids(tmp_path):
     client = fake_client()
     state = State(tmp_path / "jane.json")
     agent = ensure_agent(client, state, params("l1-hello"))
     env_id = ensure_environment(client, state, "hello-env-jane")
-    vault_id = ensure_vault(client, state, "hello-vault-jane", MCP_URL, "key")
+    vault_id = ensure_vault(client, state, "hello-vault-jane", Config(values={"SN_MCP_AUTH": "static_bearer", "SN_MCP_URL": MCP_URL, "SN_API_KEY": "key"}, participant="jane"))
 
     cleanup(client, state, out=lambda _l: None)
 
     assert client.agents.store[agent.id].archived_at is not None
-    assert env_id not in client.environments.store
+    assert client.environments.store[env_id].archived_at is not None
+    assert ("delete", env_id) not in client.environments.calls
     assert vault_id not in client.vaults.store
     assert not (tmp_path / "jane.json").exists()
 

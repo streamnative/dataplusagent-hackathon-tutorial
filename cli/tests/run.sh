@@ -19,13 +19,14 @@ ln -s "$TESTS/fake-ork" "$WORK/bin/ork"
 export PATH="$WORK/bin:$PATH"
 # Nothing from the developer's own shell may leak into the tests.
 unset SN_API_KEY SN_SERVICE_ACCOUNT ORCA_BASE_URL KAFKA_BOOTSTRAP_SERVERS SCHEMA_REGISTRY_URL SN_MCP_URL \
-  LOGIN_TOPIC ORCA_MODEL PARTICIPANT ORCA_API_KEY ORCA_ACCESS_TOKEN ORCA_REGISTRY_URL
+  LOGIN_TOPIC ORCA_MODEL PARTICIPANT ORCA_API_KEY ORCA_ACCESS_TOKEN ORCA_REGISTRY_URL \
++  SN_MCP_AUTH SN_MCP_OAUTH_ISSUER SN_MCP_OAUTH_SCOPE
 export HELLO_ROUND_SECONDS=1 HELLO_TURN_TIMEOUT=5
 
 MCP_URL=https://mcp.example.com/mcp/x/o-test/sqlworkspace/ws-1
 SHA_L1=457f86a77738415f
 SHA_L3=ac4d0b08aca3f336
-SHA_L4=452e3876c295ffc8
+SHA_L4=8d424c704af22671
 
 PASSED=0
 FAILED=0
@@ -51,6 +52,7 @@ SN_API_KEY=test-key
 SN_SERVICE_ACCOUNT=team-07@o-test.auth.streamnative.cloud
 ORCA_BASE_URL=https://ws.example.com
 SN_MCP_URL=$MCP_URL
+SN_MCP_AUTH=static_bearer
 ORCA_MODEL=claude-sonnet-4-6
 PARTICIPANT=jane
 EOF
@@ -106,7 +108,7 @@ test_missing_team_card() {
   run "" l1_hello.sh
   check "exits 1 without a team card" [ "$STATUS" -eq 1 ]
   check "names every missing variable" \
-    err_has "Missing ORCA_BASE_URL, SN_API_KEY, ORCA_MODEL. Copy .env.example to .env in the repo root and fill it in from your team card."
+    err_has "Missing ORCA_BASE_URL, ORCA_MODEL, SN_API_KEY. Copy .env.example to .env in the repo root and fill it in from your team card."
   check "runs no ork command" [ ! -s "$FAKE_ORK_DIR/calls.log" ]
 }
 
@@ -116,6 +118,7 @@ test_l1_creates_everything() {
   reaction 1 "$(message evt_a 'Hello!')" "$(end_turn 1)"
   run "" l1_hello.sh
   check "L1 succeeds" [ "$STATUS" -eq 0 ]
+  check "hosted team cards use only Bearer" jq -e '.access_token_set and (.api_key_set | not)' "$FAKE_ORK_DIR/auth.json"
   check "creates the environment" called '["agent","environments","create","--name","hello-env-jane","-o","json"]'
   check "creates the agent with the L1 fingerprint" called_with "agent create" "definition_sha=$SHA_L1"
   check "names the agent after the participant" called_with "agent create" "hello-agent-jane"
@@ -176,7 +179,7 @@ test_l1_creates_everything() {
   check "cleanup succeeds" [ "$STATUS" -eq 0 ]
   check "archives the agent" out_has "removed agent agent_2"
   check "deletes the vault" out_has "removed vault vlt_1"
-  check "deletes the environment" out_has "removed environment env_1"
+  check "archives the environment" out_has "removed environment env_1"
   check "forgets the ids" [ ! -f "$R/.orca-state/jane.json" ]
 }
 
@@ -323,6 +326,68 @@ test_team_card_parsing() {
   check "state goes to the participant's file" [ -f "$R/.orca-state/jane-doe-42.json" ]
 }
 
+test_local_registry_key() {
+  fresh_repo local-key
+  cat >"$R/.env" <<EOF
+ORCA_BASE_URL=http://127.0.0.1:8080
+ORCA_API_KEY=local-test-key
+ORCA_MODEL=claude-sonnet-4-6
+PARTICIPANT=jane
+EOF
+  export ORCA_ACCESS_TOKEN=stale-bearer
+  reaction 1 "$(message evt_a 'Hello locally!')" "$(end_turn local)"
+  run "" l1_hello.sh
+  unset ORCA_ACCESS_TOKEN
+  check "local L1 needs no team-card key" [ "$STATUS" -eq 0 ]
+  check "local key uses only x-api-key" jq -e '.api_key_set and (.access_token_set | not)' "$FAKE_ORK_DIR/auth.json"
+}
+
+test_mcp_oauth() {
+  fresh_repo oauth
+  card
+  # Omitted SN_MCP_AUTH defaults to OAuth.
+  sed -i.bak '/SN_MCP_AUTH=/d' "$R/.env"
+  cat >>"$R/.env" <<EOF
+SN_MCP_OAUTH_ISSUER=https://auth.example.com/
+SN_MCP_OAUTH_SCOPE="openid profile email offline_access"
+EOF
+  export ORCA_API_KEY=stale-local ORCA_ACCESS_TOKEN=stale-bearer
+  # The configured local key has priority. Unset it to exercise hosted Bearer.
+  unset ORCA_API_KEY
+  reaction 1 "$(message evt_a 'Live data!')" "$(end_turn oauth)"
+  run "" l3_live_context.sh
+  unset ORCA_ACCESS_TOKEN
+  check "OAuth L3 succeeds" [ "$STATUS" -eq 0 ]
+  check "OAuth invokes native discovery and browser flow" called "$(jq -cn --arg url "$MCP_URL" '["agent","vaults","credentials","create","--vault","vlt_1","--display-name","streamnative-mcp","--mcp-server-url",$url,"--oauth-issuer","https://auth.example.com/","--oauth-scope","openid profile email offline_access","-o","json"]')"
+  check "OAuth stores no static bearer credential" jq -e '.[0].auth.type == "mcp_oauth"' "$FAKE_ORK_DIR/creds/vlt_1.json"
+  check "OAuth child uses only Registry Bearer" jq -e '.access_token_set and (.api_key_set | not)' "$FAKE_ORK_DIR/auth.json"
+  # shellcheck disable=SC2016  # the child shell expands its own positional argument
+  check "OAuth state contains no tokens" bash -c '! grep -q "test-key" "$1"' _ "$R/.orca-state/jane.json"
+
+  reaction 2 "$(message evt_b 'Still connected!')" "$(end_turn reuse)"
+  run "" l4_act.sh
+  check "L4 reuses L3 OAuth credential" [ "$(calls_of "agent vaults credentials create")" -eq 1 ]
+  check "OAuth L4 succeeds" [ "$STATUS" -eq 0 ]
+
+  jq '.[0].auth.type = "static_bearer"' "$FAKE_ORK_DIR/creds/vlt_1.json" >"$R/creds.tmp"
+  mv "$R/creds.tmp" "$FAKE_ORK_DIR/creds/vlt_1.json"
+  reaction 3 "$(message evt_c 'New OAuth credential!')" "$(end_turn replace)"
+  run "" l3_live_context.sh
+  check "static credentials do not satisfy OAuth mode" [ "$(calls_of "agent vaults credentials create")" -eq 2 ]
+
+  fresh_repo oauth-fail
+  card
+  export SN_MCP_AUTH=oauth
+  export FAKE_ORK_FAIL="agent vaults credentials create:401"
+  run "" l3_live_context.sh
+  unset SN_MCP_AUTH
+  check "OAuth failure stops L3" [ "$STATUS" -ne 0 ]
+  check "OAuth failure has setup guidance" err_has "MCP OAuth authorization failed"
+  check "no session after OAuth failure" [ "$(calls_of "agent sessions create")" -eq 0 ]
+}
+
+test_mcp_oauth
+test_local_registry_key
 test_missing_team_card
 test_l1_creates_everything
 test_turns_ignore_history_and_duplicates

@@ -1,18 +1,21 @@
 """agent_params: turn agent/<layer>.json into the arguments for agents.create/update."""
 
 import inspect
+import json
+import os
+import subprocess
 
 import pytest
 from orca.resources.agents.agents import Agents
 
-from common import Config, ConfigError, agent_params, load_layer
+from common import REPO_ROOT, Config, ConfigError, agent_params, load_layer
 from policy import effective_policy
 
 MCP_URL = "https://mcp.example.com/mcp/x/o-test/sqlworkspace/ws-1"
 
 
 def config(**overrides: str) -> Config:
-    values = {"ORCA_MODEL": "claude-sonnet-4-6", "SN_MCP_URL": MCP_URL, **overrides}
+    values = {"ORCA_MODEL": "claude-sonnet-4-6", "SN_MCP_URL": MCP_URL, "RW_MCP_URL": "http://localhost:8080/mcp", **overrides}
     return Config(values=values, participant="jane")
 
 
@@ -59,6 +62,37 @@ def test_different_layers_carry_different_definition_fingerprints():
 
     assert len({fingerprint("l1-hello"), fingerprint("l3-live-context"), fingerprint("l4-act")}) == 3
     assert fingerprint("l3-live-context") == fingerprint("l3-live-context")
+
+
+@pytest.mark.parametrize("layer", ["l3-live-context", "l4-act"])
+def test_configured_database_scopes_cloud_agent_and_changes_fingerprint(layer):
+    params = agent_params(load_layer(layer), config(SN_SQL_DATABASE='catalog-\"rfu'))
+    assert params["system"].startswith('Target SQL database: "catalog-\\\"rfu".')
+    assert "never fall back to another database" in params["system"]
+    assert params["metadata"]["definition_sha"] != agent_params(load_layer(layer), config())["metadata"]["definition_sha"]
+    assert params["metadata"]["definition_sha"] != agent_params(load_layer(layer), config(SN_SQL_DATABASE="other"))["metadata"]["definition_sha"]
+
+
+@pytest.mark.parametrize("layer, stack", [("l1-hello", "cloud"), ("l3-live-context", "local"), ("l4-act", "local")])
+def test_database_setting_does_not_change_hello_or_local_agents(layer, stack):
+    definition = load_layer(layer, stack)
+    assert agent_params(definition, config(TUTORIAL_STACK=stack, SN_SQL_DATABASE="catalog-rfu")) == agent_params(definition, config(TUTORIAL_STACK=stack))
+
+
+@pytest.mark.parametrize("layer", ["l3-live-context", "l4-act"])
+def test_cli_database_definition_matches_python_without_loading_dotenv(layer):
+    # Extract only the pure definition builder; never source lib.sh/env.sh or .env.
+    source = (REPO_ROOT / "cli/lib.sh").read_text()
+    builder = source[source.index("agent_definition() {"):source.index("\n# Same recipe as the other languages")]
+    script = """layer_file() { printf '%s/agent/cloud/%s.json' "$REPO" "$1"; }
+""" + builder + '\nagent_definition "$LAYER"'
+    env = {"PATH": os.environ["PATH"], "REPO": str(REPO_ROOT), "LAYER": layer,
+           "HELLO_PARTICIPANT": "jane", "ORCA_MODEL": "claude-sonnet-4-6",
+           "SN_MCP_URL": MCP_URL, "SN_SQL_DATABASE": 'catalog-\"rfu'}
+    result = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, check=True)
+    expected = agent_params(load_layer(layer), config(SN_SQL_DATABASE=env["SN_SQL_DATABASE"]))
+    expected.pop("metadata")
+    assert json.loads(result.stdout) == expected
 
 
 @pytest.mark.parametrize(

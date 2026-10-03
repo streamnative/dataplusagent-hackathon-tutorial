@@ -11,6 +11,9 @@ yes, and has not flagged another because you said no.
 - You finished [Lab 3](03-live-context.md): the agent reads `login_failures`,
   and the browser login for the MCP server is done.
 - `flagged_accounts` exists in your SQL workspace's database (Lab 2, step 3).
+- `SN_SQL_DATABASE` in `.env` names that same database. Check the proposed
+  insert's `database` before approving: the configured target is prompt
+  guidance, not an MCP authorization boundary.
 - Your SQL workspace's MCP access is read-write; the organizers set this up.
   Read-only access offers the agent no tool that writes: see
   [Troubleshooting](troubleshooting.md).

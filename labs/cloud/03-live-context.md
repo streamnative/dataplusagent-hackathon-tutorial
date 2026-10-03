@@ -10,6 +10,10 @@ materialized view, and its answer changes when the stream does.
 
 - You finished [Lab 2](02-streaming-sql.md): `login_failures` exists in your
   SQL workspace's database.
+- Set `SN_SQL_DATABASE` in `.env` to that database's SQL catalog name (Lab 0,
+  step 2). The agent is instructed to use it for every SQL call, with no
+  fallback to another database. This is prompt guidance, not MCP permission
+  isolation; an empty value retains legacy automatic discovery.
 - One terminal is in your path's folder, a second one is at the repository root.
 - `ork` v0.6.0 or newer is installed. All three paths use it for the first MCP
   login.

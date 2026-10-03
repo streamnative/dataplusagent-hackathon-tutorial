@@ -9,7 +9,7 @@ import { effectivePolicy } from './policy.js';
 const MCP_URL = 'https://mcp.example.com/mcp/x/o-test/sqlworkspace/ws-1';
 
 function config(overrides: Record<string, string> = {}): Config {
-  return new Config({ ORCA_MODEL: 'claude-sonnet-4-6', SN_MCP_URL: MCP_URL, ...overrides }, 'jane');
+  return new Config({ ORCA_MODEL: 'claude-sonnet-4-6', SN_MCP_URL: MCP_URL, RW_MCP_URL: 'http://localhost:8080/mcp', ...overrides }, 'jane');
 }
 
 describe('agentParams', () => {
@@ -62,6 +62,23 @@ describe('agentParams', () => {
   ])('%s fingerprint matches the Python and CLI paths (%s)', (layer, expected) => {
     // Same fingerprint everywhere, so switching languages does not bump the agent's version.
     expect(agentParams(loadLayer(layer), config()).metadata.definition_sha).toBe(expected);
+  });
+
+  it.each(['l3-live-context', 'l4-act'])('%s uses the configured database and fingerprints it', (layer) => {
+    const params = agentParams(loadLayer(layer), config({ SN_SQL_DATABASE: 'catalog-"rfu' }));
+    expect(params.system).toContain(`Target SQL database: ${JSON.stringify('catalog-"rfu')}.`);
+    expect(params.system).toContain('never fall back to another database');
+    expect(params.metadata.definition_sha).not.toBe(agentParams(loadLayer(layer), config()).metadata.definition_sha);
+    expect(params.metadata.definition_sha).not.toBe(agentParams(loadLayer(layer), config({ SN_SQL_DATABASE: 'other' })).metadata.definition_sha);
+  });
+
+  it('does not change L1 or Local agents', () => {
+    expect(agentParams(loadLayer('l1-hello'), config({ SN_SQL_DATABASE: 'catalog-rfu' })))
+      .toEqual(agentParams(loadLayer('l1-hello'), config()));
+    for (const layer of ['l3-live-context', 'l4-act']) {
+      expect(agentParams(loadLayer(layer, 'local'), config({ TUTORIAL_STACK: 'local', SN_SQL_DATABASE: 'catalog-rfu' })))
+        .toEqual(agentParams(loadLayer(layer, 'local'), config({ TUTORIAL_STACK: 'local' })));
+    }
   });
 
   it.each([

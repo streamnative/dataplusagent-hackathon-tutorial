@@ -108,6 +108,12 @@ NAME        DISPLAY       INSTANCE
 c-abc1234   ana-kafka     ana
 ```
 
+From the SQL catalog list, choose the row whose `KAFKA_CLUSTER` and
+`SQL_WORKSPACE` match your resources. Set `SN_SQL_DATABASE` in `.env` to that
+row's `NAME`: this is the database you use in Lab 2 and the agent targets in
+Labs 3 and 4. Do not use the SQL workspace name. Explicit selection matters
+when your SQL workspace imports multiple catalogs.
+
 Now ask for each address, and write it into `.env`:
 
 | `.env` line | Command | Write it as |

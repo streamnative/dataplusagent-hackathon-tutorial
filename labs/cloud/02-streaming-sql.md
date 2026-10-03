@@ -12,6 +12,8 @@ Lab 3, and a table it can write to in Lab 4.
 - Open your SQL workspace. In the StreamNative Cloud console, open **SQL
   Workspace**, select your SQL workspace, and pick the database named after your
   SQL catalog (Lab 0, step 2). Use a new query tab for each step.
+  This must match `SN_SQL_DATABASE` in `.env`, so you and the agent use the same
+  database. SQL Workspace does not read `.env`; select the database yourself.
 - If the console cannot open the database yet, use `psql` from the repository
   root instead. Look up your SQL workspace's address, then connect as `root`
   with your API key as the password:

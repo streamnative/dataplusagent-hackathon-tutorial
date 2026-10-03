@@ -1,4 +1,4 @@
-"""seed.py: the login stream the Local course loads into your topic."""
+"""seed.py: the login stream each course loads into your topic in Lab 0."""
 
 import ipaddress
 import json
@@ -11,6 +11,8 @@ from confluent_kafka import KafkaError, KafkaException
 from fastavro import parse_schema
 from fastavro.validation import validate
 
+import seed
+from common import Config
 from seed import count_existing, events_in_topic, load_events, rebase_events
 
 TOPIC = "security.login_events"
@@ -130,6 +132,40 @@ def test_a_missing_topic_stops_the_seed_and_points_at_lab_0():
     assert "does not exist yet" in str(stop.value)
     assert "Lab 0" in str(stop.value)
     assert consumer.closed
+
+
+@pytest.mark.parametrize("stack, course", [("local", "Local course"), ("cloud", "Cloud course")])
+def test_a_missing_topic_names_the_course_whose_lab_0_creates_it(stack, course):
+    with pytest.raises(SystemExit) as stop:
+        count_existing(FakeConsumer(), TOPIC, stack)
+
+    assert f"{course}, Lab 0" in str(stop.value)
+
+
+def test_the_seed_loads_your_own_cluster_on_the_cloud_stack_too(monkeypatch, capsys):
+    # On StreamNative Cloud every participant has their own instance and cluster,
+    # and nobody has loaded it for them.
+    cloud = Config(
+        values={
+            "SN_API_KEY": "the-api-key",
+            "SN_SERVICE_ACCOUNT": "test@o-test.auth.streamnative.cloud",
+            "KAFKA_BOOTSTRAP_SERVERS": "kafka.example.com:9093",
+            "SCHEMA_REGISTRY_URL": "https://sr.example.com",
+            "LOGIN_TOPIC": TOPIC,
+        },
+        participant="jane",
+    )
+    written: list = []
+    monkeypatch.setattr(seed, "load_config", lambda names: cloud)
+    monkeypatch.setattr(seed, "count_existing", lambda consumer, topic, stack="local": 0)
+    monkeypatch.setattr(seed, "login_producer", lambda config, schema: "producer")
+    monkeypatch.setattr(seed, "publish", lambda producer, topic, events: written.extend(events) or [])
+    monkeypatch.setattr("confluent_kafka.Consumer", lambda settings: "consumer")
+
+    seed.main()
+
+    assert len(written) == 246
+    assert f"Loaded 246 logins for 91 accounts into {TOPIC}." in capsys.readouterr().out
 
 
 def test_an_unreachable_broker_stops_the_seed_with_the_reason_and_a_next_step():

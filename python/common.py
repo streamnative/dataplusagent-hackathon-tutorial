@@ -50,7 +50,7 @@ class Config:
 
     @property
     def stack(self) -> str:
-        """`cloud`: your team card on StreamNative Cloud. `local`: the stack on your laptop."""
+        """`cloud`: your instance on StreamNative Cloud. `local`: the stack on your laptop."""
         stack = self.values.get("TUTORIAL_STACK", "cloud")
         if stack not in STACKS:
             raise ConfigError("TUTORIAL_STACK must be cloud or local.")
@@ -67,8 +67,8 @@ def setup_hint(values: Mapping[str, str]) -> str:
     if values.get("TUTORIAL_STACK") == "local":
         return "Run local/write-env.sh in the repo root to write .env again (Local course, Lab 0)."
     return (
-        "Copy .env.cloud.example to .env in the repo root and fill it in from your team card, "
-        "or run local/write-env.sh for the Local course."
+        "Copy .env.cloud.example to .env in the repo root and fill it in from your StreamNative Cloud instance "
+        "(Cloud course, Lab 0), or run local/write-env.sh for the Local course."
     )
 
 
@@ -188,12 +188,12 @@ def schema_registry_config(config: Config) -> dict[str, str]:
 
 
 def orca_client(config: Config) -> Orca:
-    """Use a Registry workspace key locally, or the team card's hosted Bearer key."""
+    """Use a Registry workspace key locally, or the service account's API key as a Bearer token on StreamNative Cloud."""
     if key := config.values.get("ORCA_API_KEY"):
         return Orca(base_url=config["ORCA_BASE_URL"], api_key=None, default_headers={"x-api-key": key}, timeout=600)
     if key := config.values.get("SN_API_KEY"):
         return Orca(base_url=config["ORCA_BASE_URL"], api_key=key, timeout=600)
-    raise ConfigError("Set ORCA_API_KEY for ork local, or SN_API_KEY from your team card.")
+    raise ConfigError("Set ORCA_API_KEY for ork local, or SN_API_KEY (your service account's API key) for StreamNative Cloud.")
 
 
 def ensure_environment(client: Any, state: State, name: str) -> str:

@@ -133,7 +133,7 @@ test_missing_team_card() {
   run "" l1_hello.sh
   check "exits 1 without a team card" [ "$STATUS" -eq 1 ]
   check "names every missing variable, and both ways to get an .env" \
-    err_has "Missing ORCA_BASE_URL, ORCA_MODEL, SN_API_KEY. Copy .env.cloud.example to .env in the repo root and fill it in from your team card, or run local/write-env.sh for the Local course."
+    err_has "Missing ORCA_BASE_URL, ORCA_MODEL, SN_API_KEY. Copy .env.cloud.example to .env in the repo root and fill it in from your StreamNative Cloud instance (Cloud course, Lab 0), or run local/write-env.sh for the Local course."
   check "runs no ork command" [ ! -s "$FAKE_ORK_DIR/calls.log" ]
 }
 

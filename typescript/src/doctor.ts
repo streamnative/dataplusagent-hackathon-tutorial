@@ -5,7 +5,7 @@
  *     npm run doctor -- --offline    # laptop only (run this before the event)
  *     npm run doctor -- --agent-only # laptop + Agent Engine (enough for Lab 1)
  *
- * It checks the stack your .env is for: your team card on StreamNative Cloud, or
+ * It checks the stack your .env is for: your instance on StreamNative Cloud, or
  * the stack on your laptop. Every failed check prints the fix.
  */
 
@@ -62,7 +62,7 @@ export function checkOrcaBaseUrl(url: string): Check {
   }
   const localHttp = parsed?.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
   if (!parsed || !parsed.host || (parsed.protocol !== 'https:' && !localHttp)) {
-    return check('ORCA_BASE_URL', false, url, 'Use the https:// registry endpoint from your team card, or http://127.0.0.1:8080 for ork local.');
+    return check('ORCA_BASE_URL', false, url, "Use your agent workspace's https:// external endpoint (Cloud course, Lab 0), or http://127.0.0.1:8080 for ork local.");
   }
   const root = `${parsed.protocol}//${parsed.host}`;
   if (parsed.pathname.replace(/\/+$/, '')) {
@@ -147,14 +147,19 @@ export function kafkaHint(error: string, stack: Stack = 'cloud'): string {
     return 'Your key logs in but may not use this topic: its rolebinding is missing. Ask a facilitator.';
   }
   if (unreachable) {
-    return 'Cannot reach Kafka. Check KAFKA_BOOTSTRAP_SERVERS (host:port from your team card) and your network.';
+    return "Cannot reach Kafka. Check KAFKA_BOOTSTRAP_SERVERS (your Kafka cluster's host:port, Cloud course, Lab 0) and your network.";
   }
+  if (text.includes('not found')) return 'The login topic is not there yet. Create it and load it: Cloud course, Lab 0.';
   return 'See the error above, or ask a facilitator.';
 }
 
 export function schemaRegistryHint(error: string, stack: Stack = 'cloud'): string {
-  if (stack !== 'local') return 'Check SCHEMA_REGISTRY_URL; your key may lack Schema Registry read access.';
-  if (error.toLowerCase().includes('not found')) return 'The schema is registered when you seed the topic: npm run seed (Local course, Lab 0).';
+  const notFound = error.toLowerCase().includes('not found');
+  if (stack !== 'local') {
+    if (notFound) return 'The schema is registered when you load the topic: npm run seed (Cloud course, Lab 0).';
+    return 'Check SCHEMA_REGISTRY_URL; your key may lack Schema Registry read access.';
+  }
+  if (notFound) return 'The schema is registered when you seed the topic: npm run seed (Local course, Lab 0).';
   return `Cannot reach Schema Registry on your laptop. ${START_LOCAL_STACK}`;
 }
 
@@ -202,6 +207,20 @@ function checkDocker(): Check {
   return check('docker', found, found ? 'found' : 'not found', found ? '' : 'The Local course runs in Docker: install Docker Desktop, or Docker Engine with Compose v2.');
 }
 
+/** What to do when the Agent Engine answers with an HTTP error status. */
+export function agentEngineFix(status: number, stack: Stack): string {
+  if ((status === 401 || status === 403) && stack === 'local') {
+    return 'The key in .env does not match the running stack. Run local/write-env.sh; if it still fails, start over with local/down.sh --reset.';
+  }
+  if (status === 401 || status === 403) {
+    return 'The Agent Engine rejected the key. For ork local use its generated workspace key as ORCA_API_KEY; on StreamNative Cloud check SN_API_KEY and its rolebinding.';
+  }
+  if (status === 404) {
+    return "ORCA_BASE_URL is not an Agent Engine registry: use your agent workspace's external endpoint (Cloud course, Lab 0).";
+  }
+  return 'Ask a facilitator.';
+}
+
 async function probeOrca(config: Config): Promise<Check> {
   const { APIConnectionError, APIError } = await import('@runorca/orca-sdk');
   const { orcaClient } = await import('./common.js');
@@ -215,15 +234,7 @@ async function probeOrca(config: Config): Promise<Check> {
       return check('Agent Engine', false, err.message, fix);
     }
     if (err instanceof APIError && err.status) {
-      let fix = 'Ask a facilitator.';
-      if ((err.status === 401 || err.status === 403) && local) {
-        fix = 'The key in .env does not match the running stack. Run local/write-env.sh; if it still fails, start over with local/down.sh --reset.';
-      } else if (err.status === 401 || err.status === 403) {
-        fix = 'The Agent Engine rejected the key. For ork local use its generated workspace key as ORCA_API_KEY; for a team card check SN_API_KEY and its rolebinding.';
-      } else if (err.status === 404) {
-        fix = 'ORCA_BASE_URL is not an Agent Engine registry: copy the registry endpoint from your team card.';
-      }
-      return check('Agent Engine', false, `HTTP ${err.status}`, fix);
+      return check('Agent Engine', false, `HTTP ${err.status}`, agentEngineFix(err.status, config.stack));
     }
     throw err;
   }

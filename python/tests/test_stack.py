@@ -112,6 +112,16 @@ def test_without_a_stack_the_hint_names_both_ways_to_get_an_env_file():
     assert "local/write-env.sh" in str(err.value)
 
 
+def test_the_cloud_hint_sends_you_to_your_own_instance_not_to_a_team_card():
+    # Every participant reads the values from their own StreamNative Cloud
+    # instance (Cloud course, Lab 0); nobody hands out a card any more.
+    with pytest.raises(ConfigError) as err:
+        load_config(["ORCA_BASE_URL"], env={})
+
+    assert "Cloud course, Lab 0" in str(err.value)
+    assert "team card" not in str(err.value)
+
+
 def test_on_the_local_stack_the_hint_is_to_write_the_env_file_again():
     with pytest.raises(ConfigError) as err:
         load_config(["ORCA_BASE_URL"], env={"TUTORIAL_STACK": "local"})

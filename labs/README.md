@@ -4,13 +4,13 @@ Two courses teach the same five labs on two stacks. Pick one.
 
 | | [Cloud course](cloud/README.md) | [Local course](local/README.md) |
 |---|---|---|
-| Runs on | StreamNative Cloud: your team's Kafka cluster, SQL Workspace, and a hosted Agent Engine | Your laptop: Ursa for Kafka, RisingWave, and the Orca Agent Engine |
-| You need | A team card, handed out at the hackathon | Docker and an Anthropic API key |
-| Time | About 30 minutes | About 45 minutes, plus the image downloads |
-| Take it when | You are at the event | You have no team card, or you want to see every part run |
+| Runs on | StreamNative Cloud: your own instance, with a Kafka cluster, a SQL workspace, and an agent workspace | Your laptop: Ursa for Kafka, RisingWave, and the Orca Agent Engine |
+| You need | A StreamNative Cloud login with your own instance, from the hackathon organizers | Docker and an Anthropic API key |
+| Time | About 40 minutes | About 45 minutes, plus the image downloads |
+| Take it when | You are at the event | You have no StreamNative Cloud instance, or you want to see every part run |
 
 Both courses use the same three paths for the agent steps. Pick one path and stay
-on it; a teammate can pick another.
+on it.
 
 - **CLI**: the [`ork`](https://github.com/orca-ae/orca-cli) command line
 - **Python**: the [`runorca`](https://pypi.org/project/runorca/) SDK

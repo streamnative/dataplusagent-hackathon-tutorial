@@ -151,7 +151,8 @@ test_write_env_never_overwrites_a_team_card() {
   printf 'SN_API_KEY=team-key\nORCA_BASE_URL=https://ws.example.com\n' >"$R/.env"
   run write-env.sh
   check "exits 1 on a cloud .env" [ "$STATUS" -eq 1 ]
-  check "leaves the team card as it was" env_is SN_API_KEY team-key
+  check "leaves the cloud .env as it was" env_is SN_API_KEY team-key
+  check "says which course that .env is for" err_has ".env is set up for the Cloud course"
   check "says how to keep both" err_has "mv .env .env.cloud"
 }
 

@@ -50,7 +50,7 @@ hello_setup_hint() {
   if [ "$(hello_trim "${TUTORIAL_STACK:-}")" = local ]; then
     printf '%s' "Run local/write-env.sh in the repo root to write .env again (Local course, Lab 0)."
   else
-    printf '%s' "Copy .env.cloud.example to .env in the repo root and fill it in from your team card, or run local/write-env.sh for the Local course."
+    printf '%s' "Copy .env.cloud.example to .env in the repo root and fill it in from your StreamNative Cloud instance (Cloud course, Lab 0), or run local/write-env.sh for the Local course."
   fi
 }
 
@@ -84,7 +84,7 @@ hello_setup() {
     hello_die "jq is not installed. Install it (brew install jq, apt install jq, or winget install jqlang.jq) and try again."
 
   hello_load_dotenv
-  # `cloud`: your team card on StreamNative Cloud. `local`: the stack on your laptop.
+  # `cloud`: your instance on StreamNative Cloud. `local`: the stack on your laptop.
   HELLO_STACK=$(hello_trim "${TUTORIAL_STACK:-cloud}")
   case "$HELLO_STACK" in
     cloud | local) ;;

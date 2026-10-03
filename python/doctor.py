@@ -4,7 +4,7 @@
     python doctor.py --offline   # laptop only (run this before the event)
     python doctor.py --agent-only  # laptop + Agent Engine (enough for Lab 1)
 
-It checks the stack your .env is for: your team card on StreamNative Cloud, or
+It checks the stack your .env is for: your instance on StreamNative Cloud, or
 the stack on your laptop. Every failed check prints the fix.
 """
 
@@ -59,7 +59,7 @@ def check_orca_base_url(url: str) -> Check:
     parts = urlsplit(url.strip())
     local_http = parts.scheme == "http" and parts.hostname in ("localhost", "127.0.0.1", "::1")
     if not parts.netloc or (parts.scheme != "https" and not local_http):
-        return Check("ORCA_BASE_URL", False, url, "Use the https:// registry endpoint from your team card, or http://127.0.0.1:8080 for ork local.")
+        return Check("ORCA_BASE_URL", False, url, "Use your agent workspace's https:// external endpoint (Cloud course, Lab 0), or http://127.0.0.1:8080 for ork local.")
     root = f"{parts.scheme}://{parts.netloc}"
     if parts.path.rstrip("/"):
         return Check("ORCA_BASE_URL", False, url, f"Use the host root only: ORCA_BASE_URL={root}")
@@ -132,12 +132,16 @@ def kafka_hint(error: str, stack: str = "cloud") -> str:
     if "authorization" in text:
         return "Your key logs in but may not use this topic: its rolebinding is missing. Ask a facilitator."
     if any(word in text for word in ("resolve", "transport", "timed out", "connect")):
-        return "Cannot reach Kafka. Check KAFKA_BOOTSTRAP_SERVERS (host:port from your team card) and your network."
+        return "Cannot reach Kafka. Check KAFKA_BOOTSTRAP_SERVERS (your Kafka cluster's host:port, Cloud course, Lab 0) and your network."
+    if "not found" in text:
+        return "The login topic is not there yet. Create it and load it: Cloud course, Lab 0."
     return "See the error above, or ask a facilitator."
 
 
 def schema_registry_hint(error: str, stack: str = "cloud") -> str:
     if stack != "local":
+        if "not found" in error.lower():
+            return "The schema is registered when you load the topic: python seed.py (Cloud course, Lab 0)."
         return "Check SCHEMA_REGISTRY_URL; your key may lack Schema Registry read access."
     if "not found" in error.lower():
         return "The schema is registered when you seed the topic: python seed.py (Local course, Lab 0)."
@@ -198,9 +202,9 @@ def probe_orca(config: Any) -> Check:
         if err.status_code in (401, 403) and local:
             fix = "The key in .env does not match the running stack. Run local/write-env.sh; if it still fails, start over with local/down.sh --reset."
         elif err.status_code in (401, 403):
-            fix = "The Agent Engine rejected the key. For ork local use its generated workspace key as ORCA_API_KEY; for a team card check SN_API_KEY and its rolebinding."
+            fix = "The Agent Engine rejected the key. For ork local use its generated workspace key as ORCA_API_KEY; on StreamNative Cloud check SN_API_KEY and its rolebinding."
         elif err.status_code == 404:
-            fix = "ORCA_BASE_URL is not an Agent Engine registry: copy the registry endpoint from your team card."
+            fix = "ORCA_BASE_URL is not an Agent Engine registry: use your agent workspace's external endpoint (Cloud course, Lab 0)."
         else:
             fix = "Ask a facilitator."
         return Check("Agent Engine", False, f"HTTP {err.status_code}", fix)

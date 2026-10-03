@@ -49,7 +49,7 @@ last row works in any agent that can read a file.
 Started with no request, the tutor asks three things:
 
 ```text
-1. Course: Cloud (a team card, StreamNative Cloud) or Local (everything on your laptop)?
+1. Course: Cloud (your own instance on StreamNative Cloud) or Local (everything on your laptop)?
 2. Path: CLI, Python, or TypeScript?
 3. What now: start at Lab 0, resume at a lab, quiz me on a lab, or check my setup?
 ```

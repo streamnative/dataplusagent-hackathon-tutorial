@@ -1,5 +1,5 @@
 /**
- * Load the login stream into the topic on your laptop (Local course, Lab 0).
+ * Load the login stream into your topic (Lab 0, in either course).
  *
  * Replays data/login_events.jsonl: 246 synthetic logins at a fictional bank, with
  * their timestamps moved to now. One of the accounts in it is under attack.
@@ -14,7 +14,7 @@ import { pathToFileURL } from 'node:url';
 
 import { Kafka, logLevel } from 'kafkajs';
 
-import { REPO_ROOT, kafkaClientConfig, loadConfig, runMain, type Config } from './common.js';
+import { REPO_ROOT, kafkaClientConfig, loadConfig, runMain, type Config, type Stack } from './common.js';
 import { loginProducer, publish, type LoginEvent } from './inject.js';
 
 const EVENTS_FILE = join(REPO_ROOT, 'data', 'login_events.jsonl');
@@ -51,12 +51,13 @@ export interface TopicAdmin {
 }
 
 /** How many events the topic holds already. Stops the script when it cannot tell. */
-export async function countExisting(admin: TopicAdmin, topic: string): Promise<number> {
+export async function countExisting(admin: TopicAdmin, topic: string, stack: Stack = 'local'): Promise<number> {
   try {
     await admin.connect();
     // Listing every topic avoids a metadata request that could create a missing one.
     if (!(await admin.listTopics()).includes(topic)) {
-      throw new SeedError(`The topic ${topic} does not exist yet. Create it first: Local course, Lab 0.`);
+      const course = stack === 'local' ? 'Local course' : 'Cloud course';
+      throw new SeedError(`The topic ${topic} does not exist yet. Create it first: ${course}, Lab 0.`);
     }
     return eventsInTopic(await admin.fetchTopicOffsets(topic));
   } catch (err) {
@@ -72,24 +73,32 @@ function topicAdmin(config: Config): TopicAdmin {
   return new Kafka({ clientId: 'hello-seed', ...kafkaClientConfig(config), logLevel: logLevel.NOTHING, retry: { retries: 2 } }).admin();
 }
 
-async function main(): Promise<void> {
-  const config = loadConfig(['KAFKA_BOOTSTRAP_SERVERS', 'SCHEMA_REGISTRY_URL', 'LOGIN_TOPIC']);
-  if (config.stack !== 'local') {
-    throw new SeedError("`npm run seed` loads the topic on your laptop (Local course). Your team's cluster already holds the login stream.");
-  }
+/** Load the events into the topic, unless it holds some already. Returns what to tell the participant. */
+export async function seed(
+  config: Config,
+  admin: TopicAdmin,
+  write: (topic: string, events: LoginEvent[]) => Promise<string[]>,
+  force = false,
+): Promise<string> {
   const topic = config.get('LOGIN_TOPIC');
-
-  const existing = await countExisting(topicAdmin(config), topic);
-  if (existing > 0 && !process.argv.slice(2).includes('--force')) {
+  const existing = await countExisting(admin, topic, config.stack);
+  if (existing > 0 && !force) {
     throw new SeedError(`${topic} already holds ${existing} events, so it is seeded. To load another copy anyway: npm run seed -- --force`);
   }
 
   const events = rebaseEvents(loadEvents(), new Date());
-  // Registering the schema is what lets RisingWave decode the topic.
-  const errors = await publish(loginProducer(config, { schema: readFileSync(SCHEMA_FILE, 'utf8') }), topic, events);
+  const errors = await write(topic, events);
   if (errors.length > 0) throw new SeedError(`Could not write to ${topic}: ${errors[0]}\nRun \`npm run doctor\` to check your setup.`);
   const accounts = new Set(events.map((event) => event.account_id)).size;
-  console.log(`Loaded ${events.length} logins for ${accounts} accounts into ${topic}.`);
+  return `Loaded ${events.length} logins for ${accounts} accounts into ${topic}.`;
+}
+
+async function main(): Promise<void> {
+  const config = loadConfig(['KAFKA_BOOTSTRAP_SERVERS', 'SCHEMA_REGISTRY_URL', 'LOGIN_TOPIC']);
+  // Registering the schema is what lets the streaming database decode the topic.
+  const write = (topic: string, events: LoginEvent[]) =>
+    publish(loginProducer(config, { schema: readFileSync(SCHEMA_FILE, 'utf8') }), topic, events);
+  console.log(await seed(config, topicAdmin(config), write, process.argv.slice(2).includes('--force')));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

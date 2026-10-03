@@ -43,7 +43,7 @@ pages, in `labs/cloud/` and in `labs/local/`:
 `03-live-context.md` · `04-act-with-approval.md` · `troubleshooting.md`
 
 - **They named no course, or no lab and no task**: reply with only this menu.
-  1. Course: **Cloud** (a team card, StreamNative Cloud) or **Local** (everything on your laptop)?
+  1. Course: **Cloud** (your own instance on StreamNative Cloud) or **Local** (everything on your laptop)?
   2. Path: **CLI**, **Python**, or **TypeScript**?
   3. What now: **start** at Lab 0, **resume** at a lab, **quiz me** on a lab, or **check my setup**?
 - **They pasted an error or a `FAIL` line**: give the fix the troubleshooting

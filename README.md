@@ -25,18 +25,18 @@ The same five labs, on two stacks.
 
 | | [Cloud course](labs/cloud/README.md) | [Local course](labs/local/README.md) |
 |---|---|---|
-| Runs on | StreamNative Cloud: your team's Kafka cluster, SQL Workspace, and a hosted Agent Engine | Your laptop: [Ursa for Kafka](https://openlakestream.org/docs/ursa-for-kafka), [RisingWave](https://risingwave.com), and the Orca Agent Engine (`ork local`) |
-| You need | A team card, handed out at the hackathon | Docker and an Anthropic API key |
-| Time | About 30 minutes | About 45 minutes, plus image downloads |
+| Runs on | StreamNative Cloud: your own instance, with a Kafka cluster, a SQL workspace, and an agent workspace | Your laptop: [Ursa for Kafka](https://openlakestream.org/docs/ursa-for-kafka), [RisingWave](https://risingwave.com), and the Orca Agent Engine (`ork local`) |
+| You need | A StreamNative Cloud login with your own instance, from the hackathon organizers | Docker and an Anthropic API key |
+| Time | About 40 minutes | About 45 minutes, plus image downloads |
 | Start | [Lab 0: Set up](labs/cloud/00-set-up.md) | [Lab 0: Set up](labs/local/00-set-up.md) |
 
 At the hackathon, take the Cloud course: see
-[Before you arrive](docs/before-you-arrive.md). Without a team card, or to see
-every part run on your own machine, take the Local course.
+[Before you arrive](docs/before-you-arrive.md). Without a StreamNative Cloud
+instance, or to see every part run on your own machine, take the Local course.
 
 ## Pick your path
 
-The agent steps work three ways. Pick one; a teammate can pick another.
+The agent steps work three ways. Pick one.
 
 - **CLI**: the [`ork`](https://github.com/orca-ae/orca-cli) command line
 - **Python**: the [`runorca`](https://pypi.org/project/runorca/) SDK

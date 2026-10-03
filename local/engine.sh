@@ -11,7 +11,9 @@
 #   1. ork local --data-dir <this checkout>/.lab/ork start --with-gateway
 #      The Agent Engine, with the AI Gateway. The gateway makes every MCP call on
 #      your agent's behalf, so MCP tools need it. The data directory is given as a
-#      full path: ork v0.6.0 does not resolve a relative one.
+#      full path: ork v0.6.0 does not resolve a relative one. First, the engine's
+#      containers that are not running are removed, so that it starts from fresh
+#      ones. Its data is in volumes.
 #
 #   2. The link. The gateway refuses private MCP hosts unless they are on its
 #      allowlist, and `ork local start` writes that allowlist empty every time.
@@ -44,6 +46,14 @@ start_engine() {
   [ -n "$(mcp_container)" ] ||
     die "The streaming stack is not running. Start it first:
   docker compose -f local/compose.yaml up -d --wait"
+  # Replace what is not running. A container whose port could not be bound
+  # (another program had it) stays cut off from its network: Docker starts it
+  # with loopback only from then on, even once the port is free (seen with
+  # Docker Engine 29.2). The engine's data is in volumes, so nothing is lost.
+  local name
+  while IFS= read -r name; do
+    [ -z "$name" ] || docker rm "$name" >/dev/null
+  done < <(engine_stopped_containers)
   ork local --data-dir "$ORK_DIR" start --with-gateway
 }
 

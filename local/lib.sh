@@ -44,6 +44,12 @@ engine_container() {  # engine_container <service>
     --filter "label=com.docker.compose.service=$1" --format '{{.Names}}' | head -n 1
 }
 
+# The Agent Engine's containers that exist but are not running.
+engine_stopped_containers() {
+  docker ps -a --filter "label=com.docker.compose.project.working_dir=$ORK_DIR" \
+    --filter status=created --filter status=exited --filter status=dead --format '{{.Names}}'
+}
+
 mcp_container() {
   docker ps --filter "label=com.docker.compose.project=$STREAMING_PROJECT" \
     --filter "label=com.docker.compose.service=risingwave-mcp" --format '{{.Names}}' | head -n 1

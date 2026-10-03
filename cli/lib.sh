@@ -92,6 +92,12 @@ agent_definition() {  # agent_definition <layer>
               elif type == "object" then with_entries(.value |= fill)
               else . end;
     {name: $name, model: $model, system: .system, mcp_servers: (.mcp_servers | fill), tools: (.tools | fill)}
+    | if ($ENV.TUTORIAL_STACK // "cloud") == "cloud" and (.mcp_servers | length) > 0 and (($ENV.SN_SQL_DATABASE // "") | length) > 0 then
+        .system = ("Target SQL database: " + ($ENV.SN_SQL_DATABASE | tojson) +
+          ". Use this exact database for every SQL tool call, including reads, table descriptions, and writes. " +
+          "Do not discover or select another database; this overrides database discovery instructions below. " +
+          "If it is unavailable or required tables are missing, report the error and stop; never fall back to another database.\n\n" + .system)
+      else . end
   ' "$file"
 }
 

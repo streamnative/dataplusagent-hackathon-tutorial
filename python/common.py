@@ -133,6 +133,14 @@ def agent_params(layer: dict[str, Any], config: Config) -> dict[str, Any]:
         "mcp_servers": _fill(layer["mcp_servers"], config),
         "tools": _fill(layer["tools"], config),
     }
+    if config.stack == "cloud" and layer["mcp_servers"] and config.values.get("SN_SQL_DATABASE"):
+        database = json.dumps(config["SN_SQL_DATABASE"], ensure_ascii=False)
+        params["system"] = (
+            f"Target SQL database: {database}. Use this exact database for every SQL tool call, including reads, table descriptions, and writes. "
+            "Do not discover or select another database; this overrides database discovery instructions below. "
+            "If it is unavailable or required tables are missing, report the error and stop; never fall back to another database.\n\n"
+            + params["system"]
+        )
     # Same recipe in every language (and `jq -cS` in the CLI): compact JSON, sorted keys.
     canonical = json.dumps(params, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     fingerprint = hashlib.sha256(canonical.encode()).hexdigest()[:16]

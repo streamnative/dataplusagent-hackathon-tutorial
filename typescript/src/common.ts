@@ -180,6 +180,14 @@ export function agentParams(layer: Layer, config: Config): AgentParams {
     mcp_servers: fill(layer.mcp_servers, config),
     tools: fill(layer.tools, config),
   };
+  if (config.stack === 'cloud' && layer.mcp_servers.length > 0 && config.has('SN_SQL_DATABASE') && config.get('SN_SQL_DATABASE')) {
+    const database = JSON.stringify(config.get('SN_SQL_DATABASE'));
+    params.system =
+      `Target SQL database: ${database}. Use this exact database for every SQL tool call, including reads, table descriptions, and writes. ` +
+      'Do not discover or select another database; this overrides database discovery instructions below. ' +
+      'If it is unavailable or required tables are missing, report the error and stop; never fall back to another database.\n\n' +
+      params.system;
+  }
   // Same recipe in every language (and `jq -cS` in the CLI): compact JSON, sorted keys.
   const fingerprint = createHash('sha256').update(canonicalJson(params), 'utf8').digest('hex').slice(0, 16);
   return { ...params, metadata: { tutorial: 'dss2026-hello-world', layer: layer.layer, definition_sha: fingerprint } };

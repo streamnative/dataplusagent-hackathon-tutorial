@@ -11,17 +11,17 @@
 set -euo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
-hello_setup ORCA_BASE_URL ORCA_MODEL SN_MCP_URL
+hello_setup ORCA_BASE_URL ORCA_MODEL
 
 REQUEST="Flag the account most likely to be under attack right now."
 
 ensure_environment "hello-env-$HELLO_PARTICIPANT"
 
-# Next version again: agent/l4-act.json enables one write tool, always_ask.
+# Next version again: agent/<stack>/l4-act.json enables one write tool, always_ask.
 ensure_agent l4-act
 echo "$AGENT_NAME v$AGENT_VERSION: $(jq -r .summary "$(layer_file l4-act)")"
 
-ensure_vault "hello-vault-$HELLO_PARTICIPANT"
+mcp_vault
 create_session "L4: act with approval" "$VAULT_ID"
 
 # When the session pauses for approval, you decide, and the script answers with

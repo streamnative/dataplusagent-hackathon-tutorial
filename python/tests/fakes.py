@@ -86,7 +86,61 @@ class FakeSessionEvents:
         return SimpleNamespace(data=persisted)
 
 
-def client_with_events(events: FakeSessionEvents) -> SimpleNamespace:
+class LogStream:
+    """A server-sent-event stream over a session's log, starting at `position`."""
+
+    def __init__(self, log: list[SessionEvent], position: int) -> None:
+        self._log = log
+        self._position = position
+
+    def __enter__(self) -> "LogStream":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def __iter__(self):
+        # Events logged while the stream is open are delivered too.
+        while self._position < len(self._log):
+            self._position += 1
+            yield self._log[self._position - 1]
+
+
+class OrkLocalSessionEvents:
+    """A scripted session on the engine that `ork local` runs (0.5.1), as observed.
+
+    The session is one log of events. What you send is logged, with no
+    `processed_at` yet. A stream opened with `from_cursor="0"` replays the log
+    from its start and then follows it; without a cursor it starts at the live
+    edge and shows only what is logged after it was opened.
+
+    `reactions[i]` are the events the agent emits after the i-th `send()` call.
+    """
+
+    def __init__(self, reactions: list[list[dict[str, Any]]]) -> None:
+        self.calls: list[tuple] = []
+        self._reactions = list(reactions)
+        self._log: list[SessionEvent] = []
+        self._ticks = itertools.count(1)
+        self._ids = itertools.count(1)
+
+    def _now(self) -> str:
+        return f"2026-10-07T10:00:{next(self._ticks):02d}.000Z"
+
+    def stream(self, session_id: str, *, from_cursor: str | None = None, **_: Any) -> LogStream:
+        self.calls.append(("stream", session_id, from_cursor))
+        return LogStream(self._log, 0 if from_cursor == "0" else len(self._log))
+
+    def send(self, session_id: str, *, events: list[dict[str, Any]]) -> SimpleNamespace:
+        self.calls.append(("send", session_id, events))
+        persisted = [event(id=f"evt_user_{next(self._ids)}", processed_at=None, **e) for e in events]
+        self._log.extend(persisted)
+        for reaction in self._reactions.pop(0) if self._reactions else []:
+            self._log.append(event(**{"processed_at": self._now(), **reaction}))
+        return SimpleNamespace(data=persisted)
+
+
+def client_with_events(events: Any) -> SimpleNamespace:
     return SimpleNamespace(sessions=SimpleNamespace(events=events))
 
 
@@ -270,9 +324,36 @@ class FakeVaults:
             raise _not_found()
 
 
+class FakeSessions:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def create(self, **params: Any):
+        from orca.types import Session
+
+        self.calls.append(("create", params))
+        return Session(
+            id=f"ses_{len(self.calls)}",
+            type="session",
+            agent={**params["agent"], "name": "hello-agent", "model": {"id": "claude-sonnet-4-6"}, "tools": [], "mcp_servers": [], "skills": []},
+            environment_id=params["environment_id"],
+            vault_ids=params.get("vault_ids", []),
+            status="idle",
+            title=params.get("title"),
+            stats={"active_seconds": 0, "duration_seconds": 0},
+            outcome_evaluations=[],
+            usage={"input_tokens": 0, "output_tokens": 0},
+            resources=[],
+            metadata={},
+            created_at=NOW,
+            updated_at=NOW,
+        )
+
+
 def fake_client(taken_env_names: set[str] = frozenset()) -> SimpleNamespace:
     return SimpleNamespace(
         agents=FakeAgents(),
         environments=FakeEnvironments(taken_env_names),
         vaults=FakeVaults(),
+        sessions=FakeSessions(),
     )

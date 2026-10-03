@@ -83,11 +83,20 @@ class FakeProducer:
 def test_publish_writes_every_record_keyed_by_account():
     producer = FakeProducer()
 
-    errors = publish(producer, "security.login_events", "acct_9123", burst())
+    errors = publish(producer, "security.login_events", burst())
 
     assert errors == []
     assert len(producer.produced) == 7
     assert {(topic, key) for topic, key, _ in producer.produced} == {("security.login_events", "acct_9123")}
+
+
+def test_records_of_different_accounts_get_their_own_keys():
+    producer = FakeProducer()
+    records = burst()[:1] + build_burst("acct_9456", "203.0.113.78", NOW)[:1]
+
+    publish(producer, "security.login_events", records)
+
+    assert [key for _, key, _ in producer.produced] == ["acct_9123", "acct_9456"]
 
 
 def test_a_schema_registry_failure_is_reported_instead_of_raised():
@@ -95,7 +104,7 @@ def test_a_schema_registry_failure_is_reported_instead_of_raised():
 
     producer = FakeProducer(raise_on_produce=ValueSerializationError(Exception("Subject 'security.login_events-value' not found")))
 
-    errors = publish(producer, "security.login_events", "acct_9123", burst())
+    errors = publish(producer, "security.login_events", burst())
 
     assert any("not found" in e for e in errors)
 
@@ -103,8 +112,8 @@ def test_a_schema_registry_failure_is_reported_instead_of_raised():
 def test_a_delivery_failure_is_reported():
     producer = FakeProducer(delivery_error="Broker: Topic authorization failed")
 
-    assert publish(producer, "t", "acct_9123", burst()) == ["Broker: Topic authorization failed"]
+    assert publish(producer, "t", burst()) == ["Broker: Topic authorization failed"]
 
 
 def test_events_still_queued_after_the_timeout_are_reported():
-    assert publish(FakeProducer(undelivered=3), "t", "acct_9123", burst()) != []
+    assert publish(FakeProducer(undelivered=3), "t", burst()) != []

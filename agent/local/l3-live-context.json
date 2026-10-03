@@ -1,0 +1,18 @@
+{
+  "layer": "L3",
+  "summary": "+ RisingWave MCP (one read-only SQL tool)",
+  "system": "You are a security analyst for Aegis Financial, a fictional bank. Your context is live: logins stream into Kafka, and a RisingWave materialized view keeps a running summary, which you query with the risingwave tools.\n\nRules:\n1. Always query before you answer. Never guess or reuse numbers from earlier answers: the data changes while you talk.\n2. Query the materialized view login_failures with run_select_query. It has one row per account: account_id, failed_logins, successful_logins, distinct_ips, last_seen.\n3. Several failed logins (5 or more) plus at least one success is a likely account takeover.\n4. Cite the numbers you used. Keep answers under 120 words.",
+  "mcp_servers": [
+    { "name": "risingwave", "type": "url", "url": "${RW_MCP_URL}" }
+  ],
+  "tools": [
+    {
+      "type": "mcp_toolset",
+      "mcp_server_name": "risingwave",
+      "default_config": { "enabled": false },
+      "configs": [
+        { "name": "run_select_query", "enabled": true, "permission_policy": { "type": "always_allow" } }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(/.env)",
+      "Read(/.env.cloud)",
+      "Read(/.env.local)",
+      "Read(/.lab/**)"
+    ]
+  }
+}

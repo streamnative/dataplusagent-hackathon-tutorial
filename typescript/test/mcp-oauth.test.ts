@@ -92,15 +92,64 @@ it.each([['valid', true], ['invalid', false], ['unknown', false]] as const)('doc
   const validate = vi.spyOn(client.vaults.credentials, 'validate').mockResolvedValue({ status } as Awaited<ReturnType<typeof client.vaults.credentials.validate>>);
   const check = await probeMcp(config(), client, state);
   expect(check.ok).toBe(ok);
+  expect(check.label).toBe(ok ? 'PASS' : 'FAIL');
   expect(check.detail).toContain('initialization');
   if (status === 'unknown') expect(check.fix).toContain('keep the existing credential');
-  if (status === 'invalid') expect(check.fix).toContain('credentials archive cred_oauth');
+  if (status === 'invalid') {
+    expect(check.fix).toContain('credentials archive cred_oauth');
+    expect(check.fix).toContain('Lab 3');
+  }
+  expectLabsNamedLikeTheCourse(`${check.detail} ${check.fix}`);
   expect(validate).toHaveBeenCalledWith(vaultId, 'cred_oauth');
 });
 
-it('doctor asks for OAuth setup before first L3', async () => {
+/** The course says "Lab 3", so the scripts do too: never "L3" or "L4". */
+function expectLabsNamedLikeTheCourse(text: string): void {
+  expect(text).not.toMatch(/\bL[0-9]\b/);
+}
+
+it('doctor names the lab when the MCP server cannot be checked', async () => {
+  const fake = fakeClient();
+  await seed(fake);
+  const client = new Orca({ baseURL: 'https://registry.example.com', apiKey: 'test' });
+  vi.spyOn(client.vaults.credentials, 'list').mockRejectedValue(new Error('HTTP 502'));
+
+  const check = await probeMcp(config(), client, state);
+
+  expect(check.label).toBe('FAIL');
+  expect(check.detail).toContain('HTTP 502');
+  expect(check.fix).toContain('Lab 3');
+  expectLabsNamedLikeTheCourse(`${check.detail} ${check.fix}`);
+});
+
+it('a failed OAuth login names the lab to run again', () => {
+  vi.mocked(spawnSync).mockReturnValue({ status: 1 } as ReturnType<typeof spawnSync>);
+
+  let message = '';
+  try {
+    authorizeMcp('vlt_1', config());
+  } catch (err) {
+    message = (err as Error).message;
+  }
+
+  expect(message).toContain('Lab 3');
+  expectLabsNamedLikeTheCourse(message);
+});
+
+it('doctor before the first OAuth login waits for Lab 3', async () => {
   const client = new Orca({ baseURL: 'https://registry.example.com', apiKey: 'test' });
   const check = await probeMcp(config(), client, state);
-  expect(check.ok).toBe(false);
-  expect(check.fix).toContain('Run L3');
+  expect(check.wait).toBe(true);
+  expect(check.label).toBe('WAIT');
+  expect(check.fix).toContain('Lab 3');
+});
+
+it('doctor waits when the vault has no OAuth credential yet', async () => {
+  const fake = fakeClient();
+  const vaultId = await seed(fake, 'static_bearer');
+  const client = new Orca({ baseURL: 'https://registry.example.com', apiKey: 'test' });
+  vi.spyOn(client.vaults.credentials, 'list').mockImplementation(() => fake.vaults.credentials.list(vaultId) as ReturnType<typeof client.vaults.credentials.list>);
+  const check = await probeMcp(config(), client, state);
+  expect(check.wait).toBe(true);
+  expect(check.fix).toContain('Lab 3');
 });

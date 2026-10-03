@@ -1,9 +1,11 @@
 """run_turn: send one message and drive the session until the agent's turn ends."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from common import TurnError, run_turn
-from fakes import FakeSessionEvents, client_with_events
+from fakes import FakeSessionEvents, OrkLocalSessionEvents, client_with_events
 
 
 def text(t: str) -> list[dict]:
@@ -144,7 +146,37 @@ def test_a_retryable_session_error_is_reported_but_the_turn_continues():
     result, lines, _ = drive([[retrying, {"id": "evt_a", "type": "agent.message", "content": text("ok")}, idle("end_turn")]])
 
     assert result.text == "ok"
-    assert any("model busy" in line for line in lines)
+    assert any("model busy" in line and "(retrying)" in line for line in lines)
+
+
+def test_a_retry_reported_inside_the_error_is_marked_as_retrying_too():
+    # The shape `ork local` sends: the retry status sits inside `error`.
+    retrying = {
+        "id": "evt_err",
+        "type": "session.error",
+        "error": {"type": "unknown_error", "message": "server_error (status 502)", "retry_status": {"type": "retrying"}},
+    }
+
+    _, lines, _ = drive([[retrying, {"id": "evt_a", "type": "agent.message", "content": text("ok")}, idle("end_turn")]])
+
+    assert any("server_error (status 502)" in line and "(retrying)" in line for line in lines)
+
+
+def test_an_exhausted_retry_is_not_marked_as_retrying():
+    exhausted = {
+        "id": "evt_err",
+        "type": "session.error",
+        "error": {"type": "unknown_error", "message": "API key is invalid.", "retry_status": {"type": "exhausted"}},
+    }
+
+    events = FakeSessionEvents([[exhausted, idle("retries_exhausted")]])
+    lines: list[str] = []
+
+    with pytest.raises(TurnError, match="API key is invalid."):
+        run_turn(client_with_events(events), "sess_1", "hi", out=lines.append)
+
+    assert any("API key is invalid." in line for line in lines)
+    assert not any("(retrying)" in line for line in lines)
 
 
 def test_retries_exhausted_raises_with_the_last_error_message():
@@ -214,3 +246,115 @@ def test_nanosecond_timestamps_from_the_server_are_handled():
     result, _, _ = drive([[reply, {**idle("end_turn"), "processed_at": "2026-10-07T10:00:06.000000001Z"}]], history=history)
 
     assert result.text == "fine"
+
+
+def test_the_sdks_warning_about_keep_alive_frames_stays_out_of_the_lab_output():
+    # The local engine keeps a quiet stream open with empty frames. The SDK skips
+    # each one and logs a warning, which would land between the lines of a turn.
+    import logging
+
+    assert not logging.getLogger("orca._streaming").isEnabledFor(logging.WARNING)
+    assert logging.getLogger("orca._streaming").isEnabledFor(logging.ERROR)
+
+
+# ------------------------------------------- send first: the `ork local` engine --
+#
+# That engine answers a stream opened on a quiet session only at its next
+# keep-alive, 15 seconds later. With send_first=True the turn speaks first and
+# then follows the session from its start.
+
+
+def drive_local(reactions, *, confirm=None):
+    events = OrkLocalSessionEvents(reactions)
+    lines: list[str] = []
+    result = run_turn(client_with_events(events), "sess_1", "hi", confirm=confirm, out=lines.append, send_first=True)
+    return result, lines, events
+
+
+def test_send_first_sends_the_message_then_follows_the_session_from_its_start():
+    _, _, events = drive_local([[idle("end_turn")]])
+
+    assert events.calls[0] == (
+        "send",
+        "sess_1",
+        [{"type": "user.message", "content": [{"type": "text", "text": "hi"}]}],
+    )
+    # From the start of the session, not from the live edge: whatever the agent
+    # said before the stream opened is replayed, not lost.
+    assert events.calls[1] == ("stream", "sess_1", "0")
+
+
+def test_send_first_returns_and_prints_the_agents_reply():
+    result, lines, _ = drive_local([[{"id": "evt_a", "type": "agent.message", "content": text("Hello!")}, idle("end_turn")]])
+
+    assert result.text == "Hello!"
+    assert any("Hello!" in line for line in lines)
+
+
+def test_send_first_shows_only_the_second_turns_reply_on_the_second_turn():
+    events = OrkLocalSessionEvents(
+        [
+            [{"id": "evt_a1", "type": "agent.message", "content": text("first answer")}, idle("end_turn")],
+            [{"id": "evt_a2", "type": "agent.message", "content": text("second answer")}, {**idle("end_turn"), "id": "evt_idle_2"}],
+        ]
+    )
+    client = client_with_events(events)
+    run_turn(client, "sess_1", "one", out=lambda _line: None, send_first=True)
+    lines: list[str] = []
+
+    result = run_turn(client, "sess_1", "two", out=lines.append, send_first=True)
+
+    assert result.text == "second answer"
+    assert not any("first answer" in line for line in lines)
+
+
+def test_send_first_does_not_answer_an_approval_that_an_earlier_turn_left_open():
+    events = OrkLocalSessionEvents(
+        [
+            # The first turn stops at a request for approval, and nobody answers it.
+            [{**INSERT_CALL, "id": "evt_old_tool"}, {**idle("requires_action", ["evt_old_tool"]), "id": "evt_old_wait"}],
+            [{"id": "evt_a", "type": "agent.message", "content": text("done")}, idle("end_turn")],
+        ]
+    )
+    client = client_with_events(events)
+    with pytest.raises(TurnError, match="approv"):
+        run_turn(client, "sess_1", "one", out=lambda _line: None, send_first=True)
+    asked = []
+
+    result = run_turn(client, "sess_1", "two", confirm=lambda tool_use: asked.append(tool_use) or True, out=lambda _line: None, send_first=True)
+
+    assert result.text == "done"
+    assert asked == []
+
+
+def test_send_first_approval_sends_allow_and_continues():
+    reactions = [
+        [INSERT_CALL, idle("requires_action", ["evt_tool_1"])],
+        [{"id": "evt_done", "type": "agent.message", "content": text("Flagged acct_9123.")}, {**idle("end_turn"), "id": "evt_idle_2"}],
+    ]
+
+    result, _, events = drive_local(reactions, confirm=lambda _tool_use: True)
+
+    assert events.calls[2] == (
+        "send",
+        "sess_1",
+        [{"type": "user.tool_confirmation", "tool_use_id": "evt_tool_1", "result": "allow"}],
+    )
+    assert result.text == "Flagged acct_9123."
+
+
+def test_send_first_treats_an_unconfirmed_message_as_an_error_not_a_hang():
+    events = OrkLocalSessionEvents([[idle("end_turn")]])
+    events.send = lambda session_id, *, events: SimpleNamespace(data=[])
+
+    with pytest.raises(TurnError, match="did not confirm"):
+        run_turn(client_with_events(events), "sess_1", "hi", out=lambda _line: None, send_first=True)
+
+
+def test_the_default_order_also_works_on_that_engine_it_only_waits_longer():
+    events = OrkLocalSessionEvents([[{"id": "evt_a", "type": "agent.message", "content": text("Hello!")}, idle("end_turn")]])
+
+    result = run_turn(client_with_events(events), "sess_1", "hi", out=lambda _line: None)
+
+    assert result.text == "Hello!"
+    assert [call[0] for call in events.calls] == ["stream", "send"]

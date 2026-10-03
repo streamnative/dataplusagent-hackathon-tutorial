@@ -20,7 +20,7 @@ QUESTION="Hi! What is the Data + Agent Hackathon, and what can you see right now
 #      ork agent environments create --name hello-env-<you>
 ensure_environment "hello-env-$HELLO_PARTICIPANT"
 
-# 2. An agent: a model plus a system prompt, from agent/l1-hello.json.
+# 2. An agent: a model plus a system prompt, from agent/<stack>/l1-hello.json.
 #      ork agent create --name hello-agent-<you> --model <model> --system <prompt>
 ensure_agent l1-hello
 echo "$AGENT_NAME v$AGENT_VERSION: $(jq -r .summary "$(layer_file l1-hello)")"

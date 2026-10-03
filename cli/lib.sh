@@ -15,7 +15,11 @@ HELLO_TURN_TIMEOUT=${HELLO_TURN_TIMEOUT:-300}    # give up on a turn after this 
 : >"$HELLO_TMP/tools"
 
 hello_cleanup_tmp() {
-  if [ -n "$HELLO_STREAM_PID" ]; then kill "$HELLO_STREAM_PID" 2>/dev/null || true; fi
+  if [ -n "$HELLO_STREAM_PID" ]; then
+    kill "$HELLO_STREAM_PID" 2>/dev/null || true
+    # Collect it here, quietly, or the shell reports the stream it just stopped.
+    wait "$HELLO_STREAM_PID" 2>/dev/null || true
+  fi
   rm -rf "$HELLO_TMP"
 }
 trap hello_cleanup_tmp EXIT
@@ -53,7 +57,7 @@ ork_get_live() {  # ork_get_live <resource command...> <id>
 }
 
 # ------------------------------------------------------------ remembered ids --
-# Shared with the Python and TypeScript paths: .orca-state/<participant>.json
+# Shared with the Python and TypeScript paths: one file per stack in .orca-state/
 
 state_get() {
   [ -f "$HELLO_STATE_FILE" ] || return 0
@@ -70,16 +74,17 @@ state_set() {
 
 # ------------------------------------------------------- agent definitions --
 
-layer_file() { printf '%s/agent/%s.json' "$HELLO_REPO_ROOT" "$1"; }
+# agent/<stack>/<layer>.json: the same file the Python and TypeScript paths use.
+layer_file() { printf '%s/agent/%s/%s.json' "$HELLO_REPO_ROOT" "$HELLO_STACK" "$1"; }
 
 # The five fields the fingerprint covers, with ${NAME} placeholders filled
-# from your team card (only mcp_servers and tools carry placeholders).
+# from your .env (only mcp_servers and tools carry placeholders).
 agent_definition() {  # agent_definition <layer>
   local file name
   file=$(layer_file "$1")
   for name in $(jq -r '[.mcp_servers, .tools] | .. | strings | [match("\\$\\{([A-Z0-9_]+)\\}"; "g").captures[0].string] | .[]' "$file" | sort -u); do
     [ -n "$(printenv "$name" || true)" ] ||
-      hello_die "Missing $name: the agent definition needs it. Add it to .env from your team card."
+      hello_die "Missing $name: the agent definition needs it. $(hello_setup_hint)"
   done
   jq -c --arg name "hello-agent-$HELLO_PARTICIPANT" --arg model "$ORCA_MODEL" '
     def fill: if type == "string" then gsub("\\$\\{(?<var>[A-Z0-9_]+)\\}"; $ENV[.var])
@@ -216,7 +221,7 @@ ensure_vault() {  # ensure_vault <name>
       [ -z "${SN_MCP_OAUTH_SCOPE:-}" ] || oauth_args+=(--oauth-scope "$SN_MCP_OAUTH_SCOPE")
       # Keep the browser URL and callback progress visible; tokens go directly to the vault.
       ork agent vaults credentials create "${oauth_args[@]}" -o json ||
-        hello_die "MCP OAuth authorization failed. Check the ork error above; normally leave SN_MCP_OAUTH_ISSUER empty for discovery, then rerun L3/L4."
+        hello_die "MCP OAuth authorization failed. Check the ork error above; normally leave SN_MCP_OAUTH_ISSUER empty for discovery, then run the Lab 3 script again."
     else
       auth=$(jq -cn --arg url "$SN_MCP_URL" --arg token "$SN_API_KEY" '{type: "static_bearer", mcp_server_url: $url, token: $token}')
       ork_json agent vaults credentials create --vault "$VAULT_ID" --display-name streamnative-mcp --auth-json "$auth" \
@@ -225,15 +230,24 @@ ensure_vault() {  # ensure_vault <name>
   fi
 }
 
+# Sets VAULT_ID to the vault a session needs to call the MCP server, or to nothing.
+# StreamNative Cloud's MCP server wants a credential, kept in a vault. The MCP
+# server on your laptop takes none, so the local stack has no vault.
+mcp_vault() {
+  VAULT_ID=""
+  [ "$HELLO_STACK" = local ] || ensure_vault "hello-vault-$HELLO_PARTICIPANT"
+}
+
 # Sets SESSION_ID: one conversation, pinned to this exact agent version.
+# The id is remembered for your checks.
 create_session() {  # create_session <title> [vault id]
   local json
   local -a vault=()
   [ -z "${2:-}" ] || vault=(--vault-id "$2")
   json=$(ork_json agent sessions create --agent "$AGENT_ID" --agent-version "$AGENT_VERSION" \
     --environment-id "$ENVIRONMENT_ID" --title "$1" ${vault[@]+"${vault[@]}"}) || ork_fail
-  # shellcheck disable=SC2034  # read by the layer scripts
   SESSION_ID=$(jq -r .id <<<"$json")
+  state_set session_id "$SESSION_ID"
 }
 
 # -------------------------------------------------------------- one turn --
@@ -326,6 +340,7 @@ run_turn() {  # run_turn <session id> <text> [approve]
               --decision deny --deny-message "$HELLO_DENY_MESSAGE" >/dev/null || ork_fail
           fi
         done
+        deadline=$((SECONDS + HELLO_TURN_TIMEOUT))        # the clock is for the agent, not for you at the prompt
         ;;
       *) hello_die "The agent stopped ($HELLO_STOP): ${HELLO_ERROR:-no details}" ;;
     esac

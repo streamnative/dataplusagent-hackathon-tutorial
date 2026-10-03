@@ -2,9 +2,9 @@
 # shellcheck source-path=SCRIPTDIR
 # L3 - Agent + live context.
 #
-# Upgrades your agent with read-only StreamNative MCP tools, gives the session a
-# vault holding the MCP credential, and opens a conversation. Ask, run the
-# injector in a second terminal, then ask again: the answer changes.
+# Upgrades your agent with read-only SQL tools from an MCP server and opens a
+# conversation. Ask, run the injector in a second terminal, then ask again: the
+# answer changes.
 #
 #   ./l3_live_context.sh
 #
@@ -12,23 +12,24 @@
 set -euo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
-hello_setup ORCA_BASE_URL ORCA_MODEL SN_MCP_URL
+hello_setup ORCA_BASE_URL ORCA_MODEL
 
 QUESTION="Which accounts look like an account takeover right now?"
 
 ensure_environment "hello-env-$HELLO_PARTICIPANT"
 
-# The same agent, next version: agent/l3-live-context.json adds the MCP server.
-#      ork agent update <id> --version <v> --mcp-server name=streamnative,type=url,url=<SN_MCP_URL> --tool-json <toolset>
+# The same agent, next version: agent/<stack>/l3-live-context.json adds the MCP server.
+#      ork agent update <id> --version <v> --mcp-server name=<name>,type=url,url=<MCP URL> --tool-json <toolset>
 ensure_agent l3-live-context
 echo "$AGENT_NAME v$AGENT_VERSION: $(jq -r .summary "$(layer_file l3-live-context)")"
 
-# The MCP server needs a credential. It goes in a vault, never in the prompt.
+# StreamNative Cloud's MCP server needs a credential. It goes in a vault, never
+# in the prompt. The MCP server on your laptop takes none, so there is no vault.
 #      ork agent vaults create --display-name hello-vault-<you>
 #      ork agent vaults credentials create --vault <id> --mcp-server-url <SN_MCP_URL>
-ensure_vault "hello-vault-$HELLO_PARTICIPANT"
+mcp_vault
 
-#      ork agent sessions create ... --vault-id <id>
+#      ork agent sessions create ... [--vault-id <id>]
 create_session "L3: live context" "$VAULT_ID"
 # shellcheck disable=SC2016  # the backticks are for the reader
 printf 'Tip: after the first answer, run `python inject.py` (or `npm run inject`) in another terminal and ask again.\n\n'

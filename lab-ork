@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# shellcheck source-path=SCRIPTDIR
+# `ork`, pointed at your Agent Engine, with the ids your lab scripts saved filled in.
+# Every check in the labs is one line of this plus jq:
+#
+#   ./lab-ork agent get @agent_id -o json | jq -e '{name, version}'
+#   ./lab-ork agent sessions events list --session @session_id -o json | jq -r '.data[].type'
+#
+# It reads .env the way the CLI path does, so it works on either stack and on any
+# of the three paths, and it replaces these four words with the ids in .orca-state/:
+#
+#   @agent_id  @environment_id  @vault_id  @session_id
+#
+# Everything else goes to ork exactly as you typed it.
+set -euo pipefail
+# shellcheck source=cli/env.sh
+. "$(dirname "${BASH_SOURCE[0]}")/cli/env.sh"
+hello_setup ORCA_BASE_URL
+
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    @agent_id | @environment_id | @vault_id | @session_id)
+      key=${arg#@}
+      id=""
+      [ ! -f "$HELLO_STATE_FILE" ] || id=$(jq -r --arg key "$key" '.[$key] // empty' "$HELLO_STATE_FILE")
+      [ -n "$id" ] ||
+        hello_die "No $key yet: the lab step that creates it has not run (looked in ${HELLO_STATE_FILE#"$HELLO_REPO_ROOT"/})."
+      args+=("$id")
+      ;;
+    *) args+=("$arg") ;;
+  esac
+done
+
+exec ork ${args[@]+"${args[@]}"}

@@ -2,7 +2,7 @@
 
     python cleanup.py
 
-Your SQL objects stay; drop them with sql/99_reset.sql.
+Your SQL objects stay; drop them with sql/cloud/99_reset.sql or sql/local/99_reset.sql.
 """
 
 from common import cleanup, load_config, orca_client, run_main, state_for

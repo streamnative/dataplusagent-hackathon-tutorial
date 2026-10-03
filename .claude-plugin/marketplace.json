@@ -1,0 +1,21 @@
+{
+  "name": "dataplusagent-hackathon-tutorial",
+  "owner": {
+    "name": "StreamNative"
+  },
+  "metadata": {
+    "description": "The tutor for the Data + Agent Hackathon hello-world labs",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "data-agent-tutor",
+      "description": "A tutor that walks you through the Data + Agent Hackathon labs one step at a time, checks your work with you, and quizzes you",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/data-agent-tutor"
+      ]
+    }
+  ]
+}

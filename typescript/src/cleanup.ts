@@ -3,7 +3,7 @@
  *
  *     npm run cleanup
  *
- * Your SQL objects stay; drop them with sql/99_reset.sql.
+ * Your SQL objects stay; drop them with sql/cloud/99_reset.sql or sql/local/99_reset.sql.
  */
 
 import { cleanup, loadConfig, orcaClient, runMain, stateFor } from './common.js';

@@ -17,6 +17,8 @@ import type {
   EnvironmentCreateParams,
   EventSendParams,
   EventSendResponse,
+  Session,
+  SessionCreateParams,
   SessionEvent,
   SessionEventInput,
   Vault,
@@ -98,7 +100,64 @@ export class FakeSessionEvents {
   }
 }
 
-export function clientWithEvents(events: FakeSessionEvents) {
+/** A server-sent-event stream over a session's log, starting at `position`. */
+class LogStream implements AsyncIterable<SessionEvent> {
+  constructor(
+    private readonly log: SessionEvent[],
+    private position: number,
+  ) {}
+
+  async *[Symbol.asyncIterator](): AsyncIterator<SessionEvent> {
+    // Events logged while the stream is open are delivered too.
+    while (this.position < this.log.length) {
+      yield this.log[this.position++];
+    }
+  }
+}
+
+/**
+ * A scripted session on the engine that `ork local` runs (0.5.1), as observed.
+ *
+ * The session is one log of events. What you send is logged, with no
+ * `processed_at` yet. A stream opened with `from_cursor: '0'` replays the log
+ * from its start and then follows it; without a cursor it starts at the live
+ * edge and shows only what is logged after it was opened.
+ *
+ * `reactions[i]` are the events the agent emits after the i-th `send()` call.
+ */
+export class OrkLocalSessionEvents {
+  readonly calls: Array<['stream', string, string | undefined] | ['send', string, SessionEventInput[]]> = [];
+  private readonly reactions: RawEvent[][];
+  private readonly log: SessionEvent[] = [];
+  private ticks = 0;
+  private ids = 0;
+
+  constructor(reactions: RawEvent[][]) {
+    this.reactions = [...reactions];
+  }
+
+  private now(): string {
+    this.ticks += 1;
+    return `2026-10-07T10:00:${String(this.ticks).padStart(2, '0')}.000Z`;
+  }
+
+  async stream(sessionId: string, params: { from_cursor?: string } = {}): Promise<AsyncIterable<SessionEvent>> {
+    this.calls.push(['stream', sessionId, params.from_cursor]);
+    return new LogStream(this.log, params.from_cursor === '0' ? 0 : this.log.length);
+  }
+
+  async send(sessionId: string, params: EventSendParams): Promise<EventSendResponse> {
+    this.calls.push(['send', sessionId, params.events]);
+    const persisted = params.events.map((e) => ({ id: `evt_user_${++this.ids}`, processed_at: null, ...e }) as SessionEvent);
+    this.log.push(...persisted);
+    for (const reaction of this.reactions.shift() ?? []) {
+      this.log.push({ processed_at: this.now(), ...reaction } as SessionEvent);
+    }
+    return { data: persisted };
+  }
+}
+
+export function clientWithEvents<E extends FakeSessionEvents | OrkLocalSessionEvents>(events: E) {
   return { sessions: { events } };
 }
 
@@ -290,6 +349,49 @@ export class FakeVaults {
   }
 }
 
+export class FakeSessions {
+  readonly calls: Array<['create', SessionCreateParams]> = [];
+
+  async create(params: SessionCreateParams): Promise<Session> {
+    this.calls.push(['create', params]);
+    const agent = params.agent as { id: string; version: number };
+    return {
+      id: `ses_${this.calls.length}`,
+      type: 'session',
+      agent: {
+        id: agent.id,
+        type: 'agent',
+        name: 'hello-agent',
+        description: null,
+        version: agent.version,
+        model: { id: 'claude-sonnet-4-6' },
+        system: null,
+        tools: [],
+        mcp_servers: [],
+        skills: [],
+        multiagent: null,
+      },
+      environment_id: params.environment_id,
+      vault_ids: params.vault_ids ?? [],
+      status: 'idle',
+      title: params.title ?? null,
+      stats: { active_seconds: 0, duration_seconds: 0 },
+      outcome_evaluations: [],
+      usage: { input_tokens: 0, output_tokens: 0 },
+      resources: [],
+      metadata: {},
+      created_at: NOW,
+      updated_at: NOW,
+      archived_at: null,
+    };
+  }
+}
+
 export function fakeClient(takenEnvNames: Iterable<string> = []) {
-  return { agents: new FakeAgents(), environments: new FakeEnvironments(takenEnvNames), vaults: new FakeVaults() };
+  return {
+    agents: new FakeAgents(),
+    environments: new FakeEnvironments(takenEnvNames),
+    vaults: new FakeVaults(),
+    sessions: new FakeSessions(),
+  };
 }

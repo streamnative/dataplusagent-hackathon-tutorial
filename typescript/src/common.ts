@@ -38,8 +38,10 @@ export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', 
 
 // ------------------------------------------------------------------ config --
 
-/** The team card (.env) is missing something. */
+/** Your .env is missing something. */
 export class ConfigError extends Error {}
+
+export type Stack = 'cloud' | 'local';
 
 export class Config {
   readonly #values: Record<string, string>; // holds your API key: never print it
@@ -56,25 +58,44 @@ export class Config {
   }
 
   get(name: string): string {
-    if (!this.has(name)) throw new ConfigError(missingMessage([name]));
+    this.require(name);
     return this.#values[name];
+  }
+
+  /** `cloud`: your team card on StreamNative Cloud. `local`: the stack on your laptop. */
+  get stack(): Stack {
+    const stack = this.#values.TUTORIAL_STACK ?? 'cloud';
+    if (stack !== 'cloud' && stack !== 'local') throw new ConfigError('TUTORIAL_STACK must be cloud or local.');
+    return stack;
+  }
+
+  require(...names: string[]): void {
+    const missing = names.filter((name) => !this.has(name));
+    if (missing.length > 0) throw new ConfigError(`Missing ${missing.join(', ')}. ${setupHint(this)}`);
   }
 }
 
-/** Read the team card: the repo's .env file, overridden by exported variables. */
+/** How to get a complete .env, for the stack this one is for. */
+export function setupHint(config: Config): string {
+  if (config.has('TUTORIAL_STACK') && config.get('TUTORIAL_STACK') === 'local') {
+    return 'Run local/write-env.sh in the repo root to write .env again (Local course, Lab 0).';
+  }
+  return (
+    'Copy .env.cloud.example to .env in the repo root and fill it in from your team card, ' +
+    'or run local/write-env.sh for the Local course.'
+  );
+}
+
+/** Read .env in the repo root, overridden by exported variables. */
 export function loadConfig(required: string[], env?: Record<string, string | undefined>): Config {
   const source = env ?? { ...readDotenv(join(REPO_ROOT, '.env')), ...process.env };
   const values: Record<string, string> = {};
   for (const [name, value] of Object.entries(source)) {
     if (value && value.trim()) values[name] = value.trim();
   }
-  const missing = required.filter((name) => !(name in values));
-  if (missing.length > 0) throw new ConfigError(missingMessage(missing));
-  return new Config(values, slug(values.PARTICIPANT || osUser()));
-}
-
-function missingMessage(names: string[]): string {
-  return `Missing ${names.join(', ')}. Copy .env.example to .env in the repo root and fill it in from your team card.`;
+  const config = new Config(values, slug(values.PARTICIPANT || osUser()));
+  config.require(...required);
+  return config;
 }
 
 function readDotenv(path: string): Record<string, string> {
@@ -97,7 +118,7 @@ function slug(raw: string): string {
 
 // ------------------------------------------------------------------- state --
 
-/** Remembers the ids your scripts created, in .orca-state/<participant>.json. */
+/** Remembers the ids your scripts created, in .orca-state/. */
 export class State {
   readonly #data: Record<string, string>;
 
@@ -116,8 +137,10 @@ export class State {
   }
 }
 
+/** Each stack has its own Agent Engine, so each keeps its ids in its own file. */
 export function stateFor(config: Config): State {
-  return new State(join(REPO_ROOT, '.orca-state', `${config.participant}.json`));
+  const suffix = config.stack === 'local' ? '.local' : '';
+  return new State(join(REPO_ROOT, '.orca-state', `${config.participant}${suffix}.json`));
 }
 
 // ------------------------------------------------------- agent definitions --
@@ -141,9 +164,9 @@ export type AgentParams = AgentCreateParams & {
 
 const PLACEHOLDER = /\$\{([A-Z0-9_]+)\}/g;
 
-/** Read agent/<name>.json: the same file the CLI and Python paths use. */
-export function loadLayer(name: string): Layer {
-  return JSON.parse(readFileSync(join(REPO_ROOT, 'agent', `${name}.json`), 'utf8'));
+/** Read agent/<stack>/<name>.json: the same file the CLI and Python paths use. */
+export function loadLayer(name: string, stack: Stack = 'cloud'): Layer {
+  return JSON.parse(readFileSync(join(REPO_ROOT, 'agent', stack, `${name}.json`), 'utf8'));
 }
 
 /** The arguments for agents.create/update: the layer's JSON plus your name and model. */
@@ -162,7 +185,7 @@ export function agentParams(layer: Layer, config: Config): AgentParams {
   return { ...params, metadata: { tutorial: 'dss2026-hello-world', layer: layer.layer, definition_sha: fingerprint } };
 }
 
-/** Replace ${NAME} placeholders with values from the team card. */
+/** Replace ${NAME} placeholders with values from .env. */
 function fill<T>(value: T, config: Config): T {
   if (typeof value === 'string') return value.replace(PLACEHOLDER, (_match, name: string) => lookup(name, config)) as T;
   if (Array.isArray(value)) return value.map((item) => fill(item, config)) as T;
@@ -173,7 +196,7 @@ function fill<T>(value: T, config: Config): T {
 }
 
 function lookup(name: string, config: Config): string {
-  if (!config.has(name)) throw new ConfigError(`Missing ${name}: the agent definition needs it. Add it to .env from your team card.`);
+  if (!config.has(name)) throw new ConfigError(`Missing ${name}: the agent definition needs it. ${setupHint(config)}`);
   return config.get(name);
 }
 
@@ -194,11 +217,50 @@ function sortKeys(value: unknown): unknown {
   return value;
 }
 
+// ------------------------------------------------ Kafka and Schema Registry --
+
+/** The part of a kafkajs client's options that says where Kafka is and how to log in. */
+export interface KafkaClientConfig {
+  brokers: string[];
+  ssl?: true;
+  sasl?: { mechanism: 'plain'; username: string; password: string };
+}
+
+/** The same for the @kafkajs/confluent-schema-registry client. */
+export interface SchemaRegistryConfig {
+  host: string;
+  auth?: { username: string; password: string };
+}
+
+/** How to reach Kafka: your team's cluster over TLS, or the broker on your laptop. */
+export function kafkaClientConfig(config: Config): KafkaClientConfig {
+  const brokers = config
+    .get('KAFKA_BOOTSTRAP_SERVERS')
+    .split(',')
+    .map((broker) => broker.trim())
+    .filter(Boolean);
+  if (config.stack === 'local') return { brokers };
+  config.require('SN_SERVICE_ACCOUNT', 'SN_API_KEY');
+  return {
+    brokers,
+    ssl: true,
+    // StreamNative Cloud: the service-account principal, and the raw API key.
+    sasl: { mechanism: 'plain', username: config.get('SN_SERVICE_ACCOUNT'), password: config.get('SN_API_KEY') },
+  };
+}
+
+export function schemaRegistryConfig(config: Config): SchemaRegistryConfig {
+  const host = config.get('SCHEMA_REGISTRY_URL');
+  if (config.stack === 'local') return { host };
+  config.require('SN_SERVICE_ACCOUNT', 'SN_API_KEY');
+  return { host, auth: { username: config.get('SN_SERVICE_ACCOUNT'), password: config.get('SN_API_KEY') } };
+}
+
 // ------------------------------------------------- Agent Engine resources --
 
 /** What the tutorial uses from the Orca client: the real `Orca` fits, and so do the test fakes. */
 export interface SessionEventsApi {
-  stream(sessionId: string): Promise<AsyncIterable<SessionEvent>>;
+  stream(sessionId: string, params?: { from_cursor?: string }): Promise<AsyncIterable<SessionEvent>>;
   send(sessionId: string, params: EventSendParams): Promise<EventSendResponse>;
 }
 
@@ -330,7 +392,37 @@ export function authorizeMcp(vaultId: string, config: Config): void {
   // No shell and no credentials in argv; OAuth tokens are never read by this script.
   const result = spawnSync('ork', args, { env, stdio: 'inherit' });
   if (result.error) throw new ConfigError('Install ork with MCP OAuth proxy support and put it on PATH (see docs/before-you-arrive.md).');
-  if (result.status !== 0) throw new ConfigError('MCP OAuth authorization failed. Check the ork error above; normally leave SN_MCP_OAUTH_ISSUER empty for discovery, then rerun L3/L4.');
+  if (result.status !== 0) throw new ConfigError('MCP OAuth authorization failed. Check the ork error above; normally leave SN_MCP_OAUTH_ISSUER empty for discovery, then run the Lab 3 script again.');
+}
+
+/**
+ * The vaults a session needs to call the MCP server.
+ *
+ * StreamNative Cloud's MCP server wants a credential, kept in a vault. The MCP
+ * server on your laptop takes none, so the local stack has no vault.
+ */
+export async function mcpVaultIds(client: Pick<Client, 'vaults'>, state: State, config: Config): Promise<string[]> {
+  if (config.stack === 'local') return [];
+  return [await ensureVault(client, state, `hello-vault-${config.participant}`, config)];
+}
+
+/** One conversation, pinned to this exact agent version. Its id is remembered for your checks. */
+export async function openSession(
+  client: { sessions: Pick<Client['sessions'], 'create'> },
+  state: State,
+  environmentId: string,
+  agent: Agent,
+  title: string,
+  { vaultIds = [] }: { vaultIds?: string[] } = {},
+): Promise<Session> {
+  const session = await client.sessions.create({
+    environment_id: environmentId,
+    agent: { type: 'agent', id: agent.id, version: agent.version },
+    title,
+    ...(vaultIds.length > 0 ? { vault_ids: vaultIds } : {}),
+  });
+  state.set('session_id', session.id);
+  return session;
 }
 
 /** The remembered resource, or null if it was never created, deleted, or archived. */
@@ -374,12 +466,12 @@ export async function chat(
   client: { sessions: { events: SessionEventsApi } },
   sessionId: string,
   first: string,
-  { confirm, ask = prompt, out = console.log }: { confirm?: Confirm; ask?: Ask; out?: Out } = {},
+  { confirm, ask = prompt, out = console.log, sendFirst = false }: { confirm?: Confirm; ask?: Ask; out?: Out; sendFirst?: boolean } = {},
 ): Promise<void> {
   let question = first;
   while (question) {
     out(`[you]    ${question}`);
-    await runTurn(client, sessionId, question, { confirm, out });
+    await runTurn(client, sessionId, question, { confirm, out, sendFirst });
     question = (await ask('\nAsk again (Enter to quit): ')).trim();
   }
 }
@@ -455,27 +547,70 @@ const PREVIEW_CHARS = 160;
  *
  * `confirm(toolUse)` is asked whenever a tool with an `always_ask` policy wants
  * to run; return true to allow it, false to deny it.
+ *
+ * `sendFirst` is for the Agent Engine that `ork local` runs. It answers a stream
+ * opened on a quiet session only at its next keep-alive, 15 seconds later.
  */
 export async function runTurn(
   client: { sessions: { events: SessionEventsApi } },
   sessionId: string,
   text: string,
-  { confirm, out = console.log }: { confirm?: Confirm; out?: Out } = {},
+  { confirm, out = console.log, sendFirst = false }: { confirm?: Confirm; out?: Out; sendFirst?: boolean } = {},
 ): Promise<TurnResult> {
   const events = client.sessions.events;
+  const message: EventSendParams = { events: [{ type: 'user.message', content: [{ type: 'text', text }] }] };
+  if (sendFirst) {
+    // Speak first, then follow the session from its start: that engine replays
+    // the log, and this turn begins right after our own message in it.
+    const sent = await events.send(sessionId, message);
+    const mine = sent.data?.[0]?.id;
+    if (!mine) throw new TurnError('The Agent Engine did not confirm the message it was sent.');
+    const stream = await events.stream(sessionId, { from_cursor: '0' });
+    return follow(after(stream, mine), events, sessionId, confirm, out);
+  }
+
   // Listen first, then speak: an event emitted between the two would be lost.
   const stream = await events.stream(sessionId);
-  const sent = await events.send(sessionId, { events: [{ type: 'user.message', content: [{ type: 'text', text }] }] });
+  const sent = await events.send(sessionId, message);
   // Some servers replay the whole transcript on connect. Everything
   // processed before our message belongs to an earlier turn.
   const since = sent.data?.[0]?.processed_at ?? null;
+  return follow(notBefore(stream, since), events, sessionId, confirm, out);
+}
+
+type TurnEvent = SessionEvent & Record<string, any>;
+
+/** The events that follow our own message in a replay of the session. */
+async function* after(stream: AsyncIterable<SessionEvent>, messageId: string): AsyncGenerator<TurnEvent> {
+  let reached = false;
+  for await (const event of stream) {
+    if (reached) yield event;
+    else if (event.id === messageId) reached = true;
+  }
+}
+
+/** The events that were not processed before our message. */
+async function* notBefore(stream: AsyncIterable<SessionEvent>, since: string | null): AsyncGenerator<TurnEvent> {
+  for await (const event of stream as AsyncIterable<TurnEvent>) {
+    if (!before(event.processed_at, since)) yield event;
+  }
+}
+
+/** Print this turn's events, answer its requests for approval, and return at its end. */
+async function follow(
+  turn: AsyncIterable<TurnEvent>,
+  events: SessionEventsApi,
+  sessionId: string,
+  confirm: Confirm | undefined,
+  out: Out,
+): Promise<TurnResult> {
   const seen = new Set<string>();
   const toolUses = new Map<string, ToolUse>();
   const replies: string[] = [];
   let lastError = '';
 
-  for await (const event of stream as AsyncIterable<SessionEvent & Record<string, any>>) {
-    if (seen.has(event.id) || before(event.processed_at, since)) continue;
+  for await (const event of turn) {
+    if (seen.has(event.id)) continue;
     seen.add(event.id);
 
     if (event.type === 'agent.message') {
@@ -493,7 +628,7 @@ export async function runTurn(
       out(shorten(`[${label}] ${contentText(event.content)}`));
     } else if (event.type === 'session.error') {
       lastError = event.error?.message || event.error?.type || 'unknown error';
-      out(`[error]  ${lastError}${event.retry_status?.will_retry ? ' (retrying)' : ''}`);
+      out(`[error]  ${lastError}${willRetry(event) ? ' (retrying)' : ''}`);
     } else if (event.type === 'session.status_idle') {
       const stop = event.stop_reason ?? {};
       if (stop.type === 'requires_action') {
@@ -526,6 +661,12 @@ async function answerApprovals(
     });
   }
   await events.send(sessionId, { events: decisions });
+}
+
+/** Servers report a retry in one of two places: beside the error, or inside it. */
+function willRetry(event: Record<string, any>): boolean {
+  if (event.retry_status?.will_retry) return true;
+  return event.error?.retry_status?.type === 'retrying';
 }
 
 function before(processedAt: string | null | undefined, since: string | null): boolean {

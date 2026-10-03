@@ -1,4 +1,4 @@
-"""Inject a brute-force login burst into your team's login topic.
+"""Inject a brute-force login burst into the login topic.
 
 Six failed logins from a new IP address, then a success: the classic
 account-takeover pattern. The materialized view login_failures picks it up
@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from common import load_config, run_main
+from common import Config, kafka_client_config, load_config, run_main, schema_registry_config
 
 FAILURES = 6
 
@@ -62,8 +62,11 @@ def build_burst(account_id: str, ip_address: str, now: datetime) -> list[dict[st
     return records
 
 
-def publish(producer: Any, topic: str, key: str, records: list[dict[str, Any]]) -> list[str]:
-    """Write the records and wait for Kafka to confirm them. Returns what went wrong, if anything."""
+def publish(producer: Any, topic: str, records: list[dict[str, Any]]) -> list[str]:
+    """Write the records, each keyed by its account, and wait for Kafka to confirm them.
+
+    Returns what went wrong, if anything.
+    """
     from confluent_kafka import KafkaException
 
     errors: list[str] = []
@@ -75,7 +78,7 @@ def publish(producer: Any, topic: str, key: str, records: list[dict[str, Any]]) 
     try:
         for record in records:
             # Serializing looks the schema up in Schema Registry, so it can fail here too.
-            producer.produce(topic, key=key, value=record, on_delivery=delivered)
+            producer.produce(topic, key=record["account_id"], value=record, on_delivery=delivered)
         undelivered = producer.flush(30)
     except KafkaException as err:
         return [str(err)]
@@ -84,39 +87,43 @@ def publish(producer: Any, topic: str, key: str, records: list[dict[str, Any]]) 
     return errors
 
 
-def main() -> None:
+def login_producer(config: Config, *, schema: str | None = None) -> Any:
+    """A producer of Avro login events.
+
+    By default it writes with the schema the topic already has and never registers
+    a new one. Pass `schema` to register it first: that is how seed.py fills a new topic.
+    """
     from confluent_kafka import SerializingProducer
     from confluent_kafka.schema_registry import SchemaRegistryClient
     from confluent_kafka.schema_registry.avro import AvroSerializer
     from confluent_kafka.serialization import StringSerializer
 
-    config = load_config(["KAFKA_BOOTSTRAP_SERVERS", "SCHEMA_REGISTRY_URL", "SN_SERVICE_ACCOUNT", "SN_API_KEY", "LOGIN_TOPIC"])
-    topic = config["LOGIN_TOPIC"]
-
-    registry = SchemaRegistryClient(
-        {"url": config["SCHEMA_REGISTRY_URL"], "basic.auth.user.info": f"{config['SN_SERVICE_ACCOUNT']}:{config['SN_API_KEY']}"}
-    )
-    producer = SerializingProducer(
+    registry = SchemaRegistryClient(schema_registry_config(config))
+    if schema is None:
+        serializer = AvroSerializer(registry, conf={"auto.register.schemas": False, "use.latest.version": True})
+    else:
+        serializer = AvroSerializer(registry, schema)
+    return SerializingProducer(
         {
-            "bootstrap.servers": config["KAFKA_BOOTSTRAP_SERVERS"],
-            "security.protocol": "SASL_SSL",
-            "sasl.mechanisms": "PLAIN",
-            # StreamNative Cloud: the service-account principal, and the raw API key.
-            "sasl.username": config["SN_SERVICE_ACCOUNT"],
-            "sasl.password": config["SN_API_KEY"],
+            **kafka_client_config(config),
             "enable.idempotence": False,
             "key.serializer": StringSerializer("utf_8"),
-            # Write with the schema the topic already has; never register a new one.
-            "value.serializer": AvroSerializer(registry, conf={"auto.register.schemas": False, "use.latest.version": True}),
+            "value.serializer": serializer,
         }
     )
 
+
+def main() -> None:
+    config = load_config(["KAFKA_BOOTSTRAP_SERVERS", "SCHEMA_REGISTRY_URL", "LOGIN_TOPIC"])
+    topic = config["LOGIN_TOPIC"]
+    producer = login_producer(config)
+
     account_id, ip_address = new_account_id(), new_ip()
-    errors = publish(producer, topic, account_id, build_burst(account_id, ip_address, datetime.now(timezone.utc)))
+    errors = publish(producer, topic, build_burst(account_id, ip_address, datetime.now(timezone.utc)))
     if errors:
         raise SystemExit(f"Could not write to {topic}: {errors[0]}\nRun `python doctor.py` to check your Kafka access.")
     print(f"Injected {FAILURES} failed logins + 1 success for {account_id} from {ip_address} into {topic}.")
-    print(f"Ask your agent again, or check in SQL Studio:  SELECT * FROM login_failures WHERE account_id = '{account_id}';")
+    print(f"Ask your agent again, or run this SQL:  SELECT * FROM login_failures WHERE account_id = '{account_id}';")
 
 
 if __name__ == "__main__":

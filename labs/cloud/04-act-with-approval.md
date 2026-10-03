@@ -10,7 +10,10 @@ yes, and has not flagged another because you said no.
 
 - You finished [Lab 3](03-live-context.md): the agent reads `login_failures`,
   and the browser login for the MCP server is done.
-- `flagged_accounts` exists in your team's database (Lab 2, step 3).
+- `flagged_accounts` exists in your SQL workspace's database (Lab 2, step 3).
+- Your SQL workspace's MCP access is read-write; the organizers set this up.
+  Read-only access offers the agent no tool that writes: see
+  [Troubleshooting](troubleshooting.md).
 - One terminal is in your path's folder, a second one is at the repository root.
 
 ## Step 1: Ask the agent to act, and approve
@@ -73,11 +76,12 @@ Ask again (Enter to quit): Now flag acct_0042 as well.
 [approve?] The agent wants to run sql_workspace_insert_rows with:
 ...
 Allow it? [y/N] n
-[agent]  The insert was denied by a human reviewer, so acct_0042 has not been flagged.
+[error] The human reviewer denied this action.
+[agent]  The human reviewer **denied** this flag. `acct_0042` has **not** been added to `flagged_accounts`, and I will not retry.
 ```
 
-The agent is told a human denied the insert, and it does not retry. Press Enter
-to end the conversation.
+The `[error]` line is the result the agent got back for its tool call: a human
+denied it. The agent does not retry. Press Enter to end the conversation.
 
 ### Check
 

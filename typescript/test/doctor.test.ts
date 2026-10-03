@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
+  agentEngineFix,
   check as newCheck,
   checkLoginSchema,
   checkMcpQuery,
@@ -235,11 +236,37 @@ describe('the two stacks', () => {
     expect(hint).not.toContain('seed');
   });
 
-  it.each(['fetch failed: connect ECONNREFUSED 10.0.0.1:443', 'HTTP 401: unauthorized'])('cloud schema registry error %s points at the team card', (error) => {
+  it.each(['fetch failed: connect ECONNREFUSED 10.0.0.1:443', 'HTTP 401: unauthorized'])('cloud schema registry error %s points at SCHEMA_REGISTRY_URL', (error) => {
     const hint = schemaRegistryHint(error);
 
     expect(hint).toContain('SCHEMA_REGISTRY_URL');
     expect(hint).not.toContain('compose');
+  });
+
+  // On StreamNative Cloud each participant creates and loads their own topic.
+
+  it('a cloud topic that is not there yet points at Lab 0', () => {
+    const hint = kafkaHint('security.login_events: not found', 'cloud');
+
+    expect(hint).toContain('Cloud course, Lab 0');
+    expect(hint).not.toContain('facilitator');
+  });
+
+  it('a cloud schema that is not registered yet points at the seeder', () => {
+    // What StreamNative Cloud's registry says: it names the subject with its namespace.
+    const hint = schemaRegistryHint('HTTP 404: {"error_code":40401,"message":"Subject \'public/default/security.login_events-value\' not found."}');
+
+    expect(hint).toContain('npm run seed');
+    expect(hint).toContain('Cloud course, Lab 0');
+  });
+
+  it.each([
+    ['an unreachable cluster', kafkaHint('Failed to resolve kafka.example.com:9093', 'cloud')],
+    ['an http URL', checkOrcaBaseUrl('http://ws.example.com').fix ?? ''],
+    ['a rejected key', agentEngineFix(401, 'cloud')],
+    ['a URL that is not a registry', agentEngineFix(404, 'cloud')],
+  ])('the cloud fix for %s names your instance, not a team card', (_case, hint) => {
+    expect(hint).not.toContain('team card');
   });
 
   it('the MCP probe sends a bearer token only when it has one', () => {

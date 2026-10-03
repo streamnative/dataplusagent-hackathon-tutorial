@@ -2,6 +2,7 @@
 
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +16,7 @@ from doctor import (
     kafka_hint,
     mcp_headers,
     parse_mcp_response,
+    probe_orca,
     required_for,
     schema_registry_hint,
     summarize,
@@ -217,11 +219,56 @@ def test_an_unreachable_local_schema_registry_points_at_the_streaming_stack():
 
 
 @pytest.mark.parametrize("error", ["[Errno 61] Connection refused", "Unauthorized (HTTP status code 401, SR code 401)"])
-def test_cloud_schema_registry_errors_point_at_the_team_card(error):
+def test_cloud_schema_registry_errors_point_at_the_schema_registry_url(error):
     hint = schema_registry_hint(error)
 
     assert "SCHEMA_REGISTRY_URL" in hint
     assert "compose" not in hint
+
+
+# On StreamNative Cloud each participant creates and loads their own topic.
+
+
+def test_a_cloud_topic_that_is_not_there_yet_points_at_lab_0():
+    hint = kafka_hint("security.login_events: not found", "cloud")
+
+    assert "Cloud course, Lab 0" in hint
+    assert "facilitator" not in hint
+
+
+def test_a_cloud_schema_that_is_not_registered_yet_points_at_the_seeder():
+    # What StreamNative Cloud's registry says: it names the subject with its namespace.
+    hint = schema_registry_hint("Subject 'public/default/security.login_events-value' not found. (HTTP status code 404, SR code 40401)")
+
+    assert "python seed.py" in hint
+    assert "Cloud course, Lab 0" in hint
+
+
+@pytest.mark.parametrize("hint", [
+    kafka_hint("Failed to resolve kafka.example.com:9093", "cloud"),
+    check_orca_base_url("http://ws.example.com").fix,
+])
+def test_cloud_fixes_name_your_instance_not_a_team_card(hint):
+    assert "team card" not in hint
+
+
+@pytest.mark.parametrize("status", [401, 404])
+def test_the_agent_engine_fixes_for_the_cloud_course_name_no_team_card(monkeypatch, status):
+    import httpx2
+    from orca import APIStatusError
+
+    request = httpx2.Request("GET", "https://ws.example.com/v1/agents")
+    error = APIStatusError("refused", response=httpx2.Response(status, request=request), body=None)
+
+    class Agents:
+        def list(self, limit):
+            raise error
+
+    monkeypatch.setattr("common.orca_client", lambda config: SimpleNamespace(agents=Agents()))
+    check = probe_orca(SimpleNamespace(stack="cloud"))
+
+    assert not check.ok
+    assert "team card" not in check.fix
 
 
 def test_the_mcp_probe_sends_a_bearer_token_only_when_it_has_one():

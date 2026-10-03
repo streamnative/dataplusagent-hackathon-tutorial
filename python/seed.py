@@ -1,4 +1,4 @@
-"""Load the login stream into the topic on your laptop (Local course, Lab 0).
+"""Load the login stream into your topic (Lab 0, in either course).
 
 Replays data/login_events.jsonl: 246 synthetic logins at a fictional bank, with
 their timestamps moved to now. One of the accounts in it is under attack.
@@ -38,7 +38,7 @@ def events_in_topic(watermarks: Iterable[tuple[int, int]]) -> int:
     return sum(high - low for low, high in watermarks)
 
 
-def count_existing(consumer: Any, topic: str) -> int:
+def count_existing(consumer: Any, topic: str, stack: str = "local") -> int:
     """How many events the topic holds already. Stops the script when it cannot tell."""
     from confluent_kafka import KafkaException, TopicPartition
 
@@ -46,7 +46,8 @@ def count_existing(consumer: Any, topic: str) -> int:
         # Listing every topic avoids a metadata request that could create a missing one.
         metadata = consumer.list_topics(timeout=15).topics.get(topic)
         if metadata is None or metadata.error is not None:
-            raise SystemExit(f"The topic {topic} does not exist yet. Create it first: Local course, Lab 0.")
+            course = "Local course" if stack == "local" else "Cloud course"
+            raise SystemExit(f"The topic {topic} does not exist yet. Create it first: {course}, Lab 0.")
         return events_in_topic(consumer.get_watermark_offsets(TopicPartition(topic, p), timeout=15) for p in metadata.partitions)
     except KafkaException as err:
         reason = err.args[0].str() if err.args else str(err)
@@ -59,11 +60,9 @@ def main() -> None:
     from confluent_kafka import Consumer
 
     config = load_config(["KAFKA_BOOTSTRAP_SERVERS", "SCHEMA_REGISTRY_URL", "LOGIN_TOPIC"])
-    if config.stack != "local":
-        raise SystemExit("seed.py loads the topic on your laptop (Local course). Your team's cluster already holds the login stream.")
     topic = config["LOGIN_TOPIC"]
 
-    existing = count_existing(Consumer({**kafka_client_config(config), "group.id": "hello-seed"}), topic)
+    existing = count_existing(Consumer({**kafka_client_config(config), "group.id": "hello-seed"}), topic, config.stack)
     if existing and "--force" not in sys.argv[1:]:
         raise SystemExit(f"{topic} already holds {existing} events, so it is seeded. To load another copy anyway: python seed.py --force")
 

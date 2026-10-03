@@ -6,7 +6,7 @@
 #   local/write-env.sh
 #
 # Run it again whenever local/engine.sh has started a fresh engine. It keeps your
-# PARTICIPANT and ORCA_MODEL, and it never overwrites a team card.
+# PARTICIPANT and ORCA_MODEL, and it never overwrites a Cloud course .env.
 set -euo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -21,7 +21,7 @@ participant=""
 model=claude-sonnet-4-6
 if [ -f "$ENV_FILE" ]; then
   [ "$(env_value TUTORIAL_STACK "$ENV_FILE")" = local ] ||
-    die ".env holds a team card (the Cloud course), and this would replace it.
+    die ".env is set up for the Cloud course, and this would replace it.
 To keep it, move it aside first:  mv .env .env.cloud   (both names are git-ignored)"
   participant=$(env_value PARTICIPANT "$ENV_FILE")
   kept=$(env_value ORCA_MODEL "$ENV_FILE")

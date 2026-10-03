@@ -125,6 +125,15 @@ describe('hints', () => {
     expect(message).toContain('local/write-env.sh');
   });
 
+  it('the cloud hint sends you to your own instance, not to a team card', () => {
+    // Every participant reads the values from their own StreamNative Cloud
+    // instance (Cloud course, Lab 0); nobody hands out a card any more.
+    const message = messageOf(() => loadConfig(['ORCA_BASE_URL'], {}));
+
+    expect(message).toContain('Cloud course, Lab 0');
+    expect(message).not.toContain('team card');
+  });
+
   it('on the local stack, the hint is to write the .env file again', () => {
     const message = messageOf(() => loadConfig(['ORCA_BASE_URL'], { TUTORIAL_STACK: 'local' }));
 

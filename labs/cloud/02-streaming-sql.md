@@ -1,6 +1,6 @@
 # Lab 2: Hello, streaming SQL
 
-**Cloud course** · 8 minutes, plus 5 on your own · SQL Workspace, in the StreamNative Cloud console
+**Cloud course** · 8 minutes, plus 5 on your own · SQL Workspace, in the StreamNative Cloud console or with `psql`
 
 You turn the login topic into a materialized view that keeps a running summary
 per account. When this lab is done, there is a view your agent can read in
@@ -9,21 +9,29 @@ Lab 3, and a table it can write to in Lab 4.
 ## Before you start
 
 - You finished [Lab 1](01-hello-agent.md).
-- In the StreamNative Cloud console, open **SQL Workspace**, select the hackathon
-  workspace, and pick your team's database. Use a new query tab for each step.
-- **Align the SQL with your `.env` first.** The default Kafka topic is
-  `security.login_events`, and SQL Workspace exposes its Avro source as
-  `"avro.security.login_events"`. The injector and the doctor read `LOGIN_TOPIC`
-  from `.env`, but SQL Workspace does not: the SQL files and the examples below
-  contain a fixed source name. Check `LOGIN_TOPIC`, then replace
-  `"avro.security.login_events"` with `"avro.<your LOGIN_TOPIC>"` in
-  [`sql/cloud/01_explore.sql`](../../sql/cloud/01_explore.sql) and
+- Open your SQL workspace. In the StreamNative Cloud console, open **SQL
+  Workspace**, select your SQL workspace, and pick the database named after your
+  SQL catalog (Lab 0, step 2). Use a new query tab for each step.
+- If the console cannot open the database yet, use `psql` from the repository
+  root instead. Look up your SQL workspace's address, then connect as `root`
+  with your API key as the password:
+
+  ```bash
+  snctl get sqlworkspace <SQL workspace> -o jsonpath='{.status.endpoints[?(@.type=="sqlgateway/pgwire")].url}'
+  export PGPASSWORD="$(sed -n 's/^SN_API_KEY=//p' .env)"
+  psql "postgresql://root@<host>:4567/<database>?sslmode=require"
+  ```
+
+  No `psql` on your laptop? Docker has one:
+  `docker run --rm -it -e PGPASSWORD postgres:16-alpine psql "postgresql://root@<host>:4567/<database>?sslmode=require"`.
+- **The source is named after the topic.** Your SQL catalog imported the topic
+  `security.login_events` as the source `"security.login_events"`. If
+  `LOGIN_TOPIC` in `.env` is something else, use that name instead, in
+  [`sql/cloud/01_explore.sql`](../../sql/cloud/01_explore.sql),
   [`sql/cloud/02_login_failures.sql`](../../sql/cloud/02_login_failures.sql), and
-  in any query copied from this page. For example,
-  `LOGIN_TOPIC=security.team07_logins` requires `FROM "avro.security.team07_logins"`.
-  Keep the double quotes around the entire source name, and confirm that SQL
-  Workspace imported that topic as an Avro source. Keep the `login_failures`
-  view name: Labs 3 and 4 query that view.
+  the queries on this page: SQL Workspace does not read `.env`. Keep the double
+  quotes around the whole name, and keep the `login_failures` view name: Labs 3
+  and 4 query that view.
 
 ## Step 1: Peek at the stream
 
@@ -32,7 +40,7 @@ one login attempt. The topic name contains dots, so it is double-quoted.
 
 ```sql
 SELECT event_time, account_id, ip_address, result, failure_reason
-FROM "avro.security.login_events"
+FROM "security.login_events"
 ORDER BY event_time DESC
 LIMIT 20;
 ```
@@ -40,14 +48,14 @@ LIMIT 20;
 ### Check
 
 The query returns 20 rows, newest first, and `result` is `SUCCESS` or `FAILURE`.
-This counts what the source holds: it returns a number greater than zero.
+This counts what the source holds: `246`, the logins you loaded in Lab 0.
 
 ```sql
-SELECT count(*) AS logins FROM "avro.security.login_events";
+SELECT count(*) AS logins FROM "security.login_events";
 ```
 
-If it says `relation "avro.security.login_events" does not exist`, you are in
-the wrong database or the source name does not match your topic: see
+If it says `table or source not found: security.login_events`, you are in the
+wrong database, or the source name does not match your topic: see
 [Troubleshooting](troubleshooting.md).
 
 ## Step 2: Turn the stream into context
@@ -63,9 +71,12 @@ SELECT
   COUNT(*) FILTER (WHERE result = 'SUCCESS') AS successful_logins,
   COUNT(DISTINCT ip_address)                AS distinct_ips,
   MAX(event_time)                           AS last_seen
-FROM "avro.security.login_events"
+FROM "security.login_events"
 GROUP BY account_id;
 ```
+
+It prints a `NOTICE` about snapshot backfill along with
+`CREATE_MATERIALIZED_VIEW`. The notice is expected.
 
 A materialized view is maintained incrementally: every new login updates the
 counts within seconds. There is no batch job to schedule and nothing to refresh.
@@ -90,7 +101,7 @@ FROM login_failures
 WHERE account_id = 'acct_0042' AND failed_logins >= 5 AND successful_logins >= 1;
 ```
 
-Before the step, the same query fails: `login_failures` does not exist.
+Before the step, the same query fails: `table or source not found: login_failures`.
 
 ## Step 3: Make room for the agent's decisions
 
@@ -129,7 +140,7 @@ as events arrive, so reading it is a cheap lookup and the result is current.
 
 </details>
 
-**2. Why is the source written as `"avro.security.login_events"`, in double quotes?**
+**2. Why is the source written as `"security.login_events"`, in double quotes?**
 
 - A. The name contains dots, and without quotes each dot would separate a schema from a name.
 - B. Double quotes make the query case-insensitive.

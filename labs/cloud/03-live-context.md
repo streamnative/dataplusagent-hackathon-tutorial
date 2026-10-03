@@ -9,7 +9,7 @@ materialized view, and its answer changes when the stream does.
 ## Before you start
 
 - You finished [Lab 2](02-streaming-sql.md): `login_failures` exists in your
-  team's database.
+  SQL workspace's database.
 - One terminal is in your path's folder, a second one is at the repository root.
 - `ork` v0.6.0 or newer is installed. All three paths use it for the first MCP
   login.

@@ -1,7 +1,7 @@
 # Troubleshooting: Cloud course
 
-Run the doctor first. It checks each service on your team card and prints the
-fix for what fails.
+Run the doctor first. It checks each service in your `.env` and prints the fix
+for what fails.
 
 | Python or CLI | TypeScript |
 |---|---|
@@ -15,16 +15,24 @@ Still stuck after two tries? Raise your hand.
 |---|---|
 | Doctor: `Agent Engine HTTP 401/403` | The key was rejected. A key created before its permissions must be re-created: ask a facilitator. |
 | Doctor: `Kafka ... authentication` | `SN_SERVICE_ACCOUNT` must be the full principal, `<name>@<org>.auth.streamnative.cloud`; `SN_API_KEY` is the raw key. |
+| Doctor: `Kafka   security.login_events: not found` | The topic is not there yet. Create it and load it: Lab 0, step 3. |
+| Doctor: `Schema Registry ... not found` | The schema is registered when you load the topic: Lab 0, step 3. |
 | Doctor: `WAIT  MCP OAuth` | Not a failure. Lab 3 does the browser login; run the doctor again after it. |
-| The login topic isn't listed in SQL Workspace | Only topics with a registered Avro schema appear. Ask a facilitator. |
-| `relation "avro.security.login_events" does not exist` | Select your team's database, and update the quoted Avro source in both Lab 2 SQL files to match `LOGIN_TOPIC` in `.env`. |
-| The agent can't find `login_failures` | Create the view in your team's database (Lab 2, step 2); the agent looks it up there. |
-| `[error]` lines from MCP tools in Lab 3 | Check `SN_MCP_URL` and `SN_MCP_AUTH`, finish the OAuth login, then run the doctor again. |
+| `snctl kafka ...`: `organization, instance and pulsar cluster are required` | Point `snctl` at your cluster first: `snctl context use --instance <your instance> --kafka-cluster <Kafka cluster>` (Lab 0, step 3). |
+| `snctl get ...` lists nothing, or another organization's resources | Set the hackathon organization: `snctl config set --organization <org>`. |
+| The SQL workspace never gets ready (`snctl get sqlworkspace <name>` shows `does not enable SQLWorkspace`) | It was created in a region that has no SQL workspaces. Ask a facilitator which region to use. |
+| The console cannot open your SQL workspace's database | Use `psql` instead: Lab 2, "Before you start". |
+| `table or source not found: security.login_events` | Pick the database named after your SQL catalog. If your `LOGIN_TOPIC` is not `security.login_events`, use your topic's name in both Lab 2 SQL files: the source is named exactly after the topic. |
+| The agent can't find `login_failures` | Create the view in your SQL workspace's database (Lab 2, step 2); the agent looks it up there. |
+| `[error] connection_unavailable: sql connection unavailable` from every SQL tool | The MCP server reached your SQL workspace but could not log in to its RisingWave as you. If `psql` works (Lab 2), the SQL workspace runs a RisingWave version that does not accept that login: ask a facilitator to update it. |
+| Lab 4: the agent says `sql_workspace_insert_rows` is not available or the session is read-only, and `Allow it? [y/N]` never appears | Your SQL workspace's MCP access is read-only. Lab 4 needs it read-write, which a facilitator sets for you (in the console: your SQL workspace, Settings, MCP). Then run the Lab 4 script again. |
+| Other `[error]` lines from MCP tools in Lab 3 | Check `SN_MCP_URL` (your SQL workspace's route, Lab 0, step 2) and `SN_MCP_AUTH`, finish the OAuth login, then run the doctor again. |
 | OAuth issuer mismatch / unsupported client authentication | Use `ork` v0.6.0 or newer and leave `SN_MCP_OAUTH_ISSUER` empty for StreamNative discovery. An explicit issuer must match an advertised authorization server. `--oauth-allow-issuer-mismatch` is only for trusted servers whose metadata issuer crosses registrable domains; StreamNative does not need it. |
-| `Cannot reach the Agent Engine` | `ORCA_BASE_URL` must be the host root from your card, with no `/v1`. |
+| `Cannot reach the Agent Engine` | `ORCA_BASE_URL` must be `https://` and your agent workspace's external endpoint, with no `/v1`: Lab 0, step 2. |
 | The agent answers from memory instead of querying | Ask again, "check the view first". The system prompt tells it to always query. |
 | `./lab-ork` says `No session_id yet` | The lab step that creates it has not run on this stack. Run the lab's script first. |
 | A script seems stuck at an approval | The session is waiting for you. Answer the `Allow it? [y/N]` prompt, or press Ctrl-C and run the lab script again: it starts a fresh session. |
+| Nothing happens for minutes after you answer `y` or `n` (on the CLI path: `The agent did not finish its turn within 300s.`) | The Agent Engine has your decision but has not acted on it yet. Run the Lab 4 script again: it starts a fresh session. A `y` you already gave can still be applied later, so the account you approved may be in `flagged_accounts` already. |
 
 ## The MCP login in Lab 3
 
@@ -53,5 +61,5 @@ For the StreamNative SQL Workspace MCP server, keep `SN_MCP_AUTH=oauth`, leave
 - Agent Engine: run the cleanup script of your path (`./cleanup.sh`,
   `python cleanup.py`, or `npm run cleanup`).
 - SQL: run [`sql/cloud/99_reset.sql`](../../sql/cloud/99_reset.sql) in your
-  team's database.
+  SQL workspace's database.
 - Kafka: injected `acct_9…` events stay in the topic. They are harmless.

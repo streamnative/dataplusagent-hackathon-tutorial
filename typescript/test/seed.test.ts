@@ -1,4 +1,4 @@
-/** seed.ts: the login stream the Local course loads into your topic. */
+/** seed.ts: the login stream each course loads into your topic in Lab 0. */
 
 import { readFileSync } from 'node:fs';
 import { BlockList } from 'node:net';
@@ -6,8 +6,9 @@ import { BlockList } from 'node:net';
 import avro from 'avsc';
 import { describe, expect, it } from 'vitest';
 
+import { Config } from '../src/common.js';
 import type { LoginEvent } from '../src/inject.js';
-import { SeedError, countExisting, eventsInTopic, loadEvents, rebaseEvents } from '../src/seed.js';
+import { SeedError, countExisting, eventsInTopic, loadEvents, rebaseEvents, seed } from '../src/seed.js';
 
 const TOPIC = 'security.login_events';
 const SCHEMA = avro.Type.forSchema(JSON.parse(readFileSync(new URL('../../schemas/login_events.avsc', import.meta.url), 'utf8')));
@@ -139,6 +140,50 @@ describe('countExisting', () => {
     expect((failure as Error).message).toContain('ECONNREFUSED 127.0.0.1:29092');
     expect((failure as Error).message).toContain('npm run doctor');
     expect(admin.disconnected).toBe(true);
+  });
+
+  it.each([
+    ['local', 'Local course'],
+    ['cloud', 'Cloud course'],
+  ] as const)('a missing topic names the course whose Lab 0 creates it (%s)', async (stack, course) => {
+    const failure = await countExisting(fakeAdmin({ offsets: null }), TOPIC, stack).catch((err: unknown) => err);
+
+    expect((failure as Error).message).toContain(`${course}, Lab 0`);
+  });
+});
+
+describe('seed', () => {
+  it('loads your own cluster on the cloud stack too', async () => {
+    // On StreamNative Cloud every participant has their own instance and cluster,
+    // and nobody has loaded it for them.
+    const cloud = new Config(
+      {
+        SN_API_KEY: 'the-api-key',
+        SN_SERVICE_ACCOUNT: 'test@o-test.auth.streamnative.cloud',
+        KAFKA_BOOTSTRAP_SERVERS: 'kafka.example.com:9093',
+        SCHEMA_REGISTRY_URL: 'https://sr.example.com',
+        LOGIN_TOPIC: TOPIC,
+      },
+      'jane',
+    );
+    const written: unknown[] = [];
+
+    const done = await seed(cloud, fakeAdmin({ offsets: [{ low: '0', high: '0' }] }), async (_topic, events) => {
+      written.push(...events);
+      return [];
+    });
+
+    expect(written).toHaveLength(246);
+    expect(done).toBe(`Loaded 246 logins for 91 accounts into ${TOPIC}.`);
+  });
+
+  it('refuses a topic that already holds events, unless forced', async () => {
+    const failure = await seed(new Config({ TUTORIAL_STACK: 'local', LOGIN_TOPIC: TOPIC }, 'jane'), fakeAdmin(), async () => []).catch(
+      (err: unknown) => err,
+    );
+
+    expect((failure as Error).message).toContain('already holds 246 events');
+    expect(await seed(new Config({ TUTORIAL_STACK: 'local', LOGIN_TOPIC: TOPIC }, 'jane'), fakeAdmin(), async () => [], true)).toContain('Loaded 246');
   });
 });
 

@@ -62,7 +62,7 @@ export class Config {
     return this.#values[name];
   }
 
-  /** `cloud`: your team card on StreamNative Cloud. `local`: the stack on your laptop. */
+  /** `cloud`: your instance on StreamNative Cloud. `local`: the stack on your laptop. */
   get stack(): Stack {
     const stack = this.#values.TUTORIAL_STACK ?? 'cloud';
     if (stack !== 'cloud' && stack !== 'local') throw new ConfigError('TUTORIAL_STACK must be cloud or local.');
@@ -81,8 +81,8 @@ export function setupHint(config: Config): string {
     return 'Run local/write-env.sh in the repo root to write .env again (Local course, Lab 0).';
   }
   return (
-    'Copy .env.cloud.example to .env in the repo root and fill it in from your team card, ' +
-    'or run local/write-env.sh for the Local course.'
+    'Copy .env.cloud.example to .env in the repo root and fill it in from your StreamNative Cloud instance ' +
+    '(Cloud course, Lab 0), or run local/write-env.sh for the Local course.'
   );
 }
 
@@ -292,14 +292,14 @@ export interface Client {
   };
 }
 
-/** Use a Registry workspace key locally, or the team card's hosted Bearer key. */
+/** Use a Registry workspace key locally, or the service account's API key as a Bearer token on StreamNative Cloud. */
 export function orcaClient(config: Config): Orca {
   const baseURL = config.get('ORCA_BASE_URL');
   if (config.has('ORCA_API_KEY')) {
     return new Orca({ baseURL, apiKey: null, defaultHeaders: { 'x-api-key': config.get('ORCA_API_KEY') }, timeout: 600_000 });
   }
   if (config.has('SN_API_KEY')) return new Orca({ baseURL, apiKey: config.get('SN_API_KEY'), timeout: 600_000 });
-  throw new ConfigError('Set ORCA_API_KEY for ork local, or SN_API_KEY from your team card.');
+  throw new ConfigError("Set ORCA_API_KEY for ork local, or SN_API_KEY (your service account's API key) for StreamNative Cloud.");
 }
 
 /** The sandbox your sessions run in. Created once, then reused. */

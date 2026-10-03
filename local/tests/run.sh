@@ -10,26 +10,53 @@ set -euo pipefail
 TESTS=$(cd "$(dirname "$0")" && pwd)
 LOCAL=$(dirname "$TESTS")
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/hello-local-tests.XXXXXX")
+WORK=$(cd "$WORK" && pwd)   # as the scripts see it: a TMPDIR ending in "/" leaves a "//"
 trap 'rm -rf "$WORK"' EXIT
 
-# A `docker` that knows which host port the registry is published on, and
-# remembers what it was asked.
+# A `docker` that knows which host port the registry is published on, which
+# containers exist, and remembers what it was asked.
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/docker" <<'EOF'
 #!/usr/bin/env bash
 [ -n "${FAKE_DOCKER_DIR:-}" ] || exit 1
 printf '%s\n' "$*" >>"$FAKE_DOCKER_DIR/calls"
 case "$1" in
-  ps) [ -f "$FAKE_DOCKER_DIR/registry-port" ] && echo registry-1 ;;
+  ps)
+    case " $* " in
+      *" -a "*)
+        # Every container, running or not: the "<status> <name>" lines of the
+        # fixture, when the question is narrowed to the engine's project. A
+        # status filter keeps the lines with that status.
+        if [[ " $* " != *" label=com.docker.compose.project.working_dir=${FAKE_DOCKER_DIR%/*}/.lab/ork "* ]]; then
+          echo someone-elses-container
+        elif [ -f "$FAKE_DOCKER_DIR/containers" ]; then
+          while read -r status name; do
+            [[ " $* " == *" status="* && " $* " != *" status=$status "* ]] || echo "$name"
+          done <"$FAKE_DOCKER_DIR/containers"
+        fi
+        ;;
+      *) [ -f "$FAKE_DOCKER_DIR/registry-port" ] && echo registry-1 ;;
+    esac
+    ;;
   port)
     [ ! -f "$FAKE_DOCKER_DIR/port-fails" ] || exit 1
     [ -f "$FAKE_DOCKER_DIR/registry-port" ] && echo "127.0.0.1:$(cat "$FAKE_DOCKER_DIR/registry-port")"
     ;;
+  rm) [ $# -ge 2 ] || exit 1 ;;   # like docker, it wants at least one container
   compose) ;;
   *) exit 1 ;;
 esac
 EOF
 chmod +x "$WORK/bin/docker"
+# An `ork` that remembers the call and stops the script there: what comes after
+# a start needs a running stack.
+cat >"$WORK/bin/ork" <<'EOF'
+#!/usr/bin/env bash
+[ -n "${FAKE_DOCKER_DIR:-}" ] || exit 1
+printf 'ork %s\n' "$*" >>"$FAKE_DOCKER_DIR/calls"
+exit 1
+EOF
+chmod +x "$WORK/bin/ork"
 export PATH="$WORK/bin:$PATH"
 # Nothing from the developer's own shell may leak into the tests.
 unset ORCA_LOCAL_REGISTRY_PORT TUTORIAL_STACK PARTICIPANT ORCA_MODEL ORCA_API_KEY
@@ -63,6 +90,7 @@ run() {  # run <script> [args...]
 env_is() { [ "$(sed -n "s/^$1=//p" "$R/.env")" = "$2" ]; }
 out_has() { grep -qF -- "$1" "$R/out"; }
 err_has() { grep -qF -- "$1" "$R/err"; }
+not() { ! "$@"; }
 
 check() {  # check <description> <command...>
   if "${@:2}"; then
@@ -164,6 +192,41 @@ test_write_env_refreshes_a_local_env_and_keeps_your_choices() {
   check "replaces the old key" env_is ORCA_API_KEY "$KEY"
   check "keeps your participant name" env_is PARTICIPANT ana
   check "keeps your model" env_is ORCA_MODEL claude-haiku-4-5
+}
+
+# ----------------------------------------------------- starting the engine --
+
+start_engine() {  # local/engine.sh, as far as `ork local start`
+  ANTHROPIC_API_KEY=not-a-real-key run engine.sh
+}
+
+started() { grep -qE '^ork local .* start --with-gateway$' "$FAKE_DOCKER_DIR/calls"; }
+removed() { grep -qE "^rm( .*)? $1( |\$)" "$FAKE_DOCKER_DIR/calls"; }
+removed_before_the_start() {  # removed_before_the_start <container>
+  sed '/^ork /,$d' "$FAKE_DOCKER_DIR/calls" | grep -qE "^rm( .*)? $1( |\$)"
+}
+
+test_engine_replaces_its_containers_that_are_not_running() {
+  # A container whose port could not be bound comes back without its network,
+  # even once the port is free (Docker Engine 29.2). A start must not reuse it.
+  fresh_repo engine-stopped
+  engine_started
+  printf '%s\n' 'created ork-registry-1' 'exited ork-migrate-1' 'running ork-harness-1' >"$FAKE_DOCKER_DIR/containers"
+  start_engine
+  check "removes a container that never started, before the engine starts" removed_before_the_start ork-registry-1
+  check "removes a container that has stopped, before the engine starts" removed_before_the_start ork-migrate-1
+  check "leaves a running container alone" not removed ork-harness-1
+  check "leaves other projects' containers alone" not removed someone-elses-container
+  check "then starts the engine" started
+}
+
+test_engine_starts_when_nothing_has_stopped() {
+  fresh_repo engine-running
+  engine_started
+  printf '%s\n' 'running ork-registry-1' >"$FAKE_DOCKER_DIR/containers"
+  start_engine
+  check "asks docker to remove nothing" not grep -q '^rm' "$FAKE_DOCKER_DIR/calls"
+  check "and starts the engine" started
 }
 
 # ------------------------------------------------------- the gateway patch --

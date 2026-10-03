@@ -41,6 +41,9 @@ The first run downloads about 4.4 GB of images. It starts six services
 - `risingwave`: streaming SQL.
 - `risingwave-mcp`: RisingWave's MCP server, the agent's SQL tools.
 
+If it fails with a port already in use, see
+[Troubleshooting](troubleshooting.md) before you run it again.
+
 ### Check
 
 The six services are running. Before the step this prints nothing.
@@ -83,6 +86,9 @@ header:
 
 Run `local/engine.sh` again whenever the engine has been restarted. It is safe
 to run at any time.
+
+If it stops with `port is already allocated`, another program has a port the
+engine needs, usually 8080: see [Troubleshooting](troubleshooting.md).
 
 ### Check
 

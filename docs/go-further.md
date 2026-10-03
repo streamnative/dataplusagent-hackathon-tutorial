@@ -5,6 +5,11 @@ into an agent that can act, with a human in the loop. Here is where to take it
 during the build session. Items marked **ask onsite** depend on features whose
 availability in your environment an onsite StreamNative engineer can confirm.
 
+This page is written for the [Cloud course](../labs/cloud/README.md). On the
+[Local course](../labs/local/README.md) the Agent Engine features below work
+the same way; the preloaded topics and the StreamNative MCP tools are specific
+to StreamNative Cloud.
+
 ## Build ideas
 
 - **Richer context.** Join the other preloaded topics (`identity_changes`,
@@ -60,9 +65,9 @@ forever.
 ### Permission policies
 
 `always_allow` runs a tool immediately; `always_ask` pauses the session for a
-human, as in L4. Keep write tools on `always_ask` until you trust them, and keep
-tools you don't need disabled (see `default_config.enabled: false` in
-[`agent/l4-act.json`](../agent/l4-act.json)).
+human, as in Lab 4. Keep write tools on `always_ask` until you trust them, and
+keep tools you don't need disabled (see `default_config.enabled: false` in
+[`agent/cloud/l4-act.json`](../agent/cloud/l4-act.json)).
 
 ### Skills and guardrails
 

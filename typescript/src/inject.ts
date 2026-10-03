@@ -1,5 +1,5 @@
 /**
- * Inject a brute-force login burst into your team's login topic.
+ * Inject a brute-force login burst into the login topic.
  *
  * Six failed logins from a new IP address, then a success: the classic
  * account-takeover pattern. The materialized view login_failures picks it up
@@ -11,10 +11,10 @@
 import { randomInt, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
-import { SchemaRegistry } from '@kafkajs/confluent-schema-registry';
+import { SchemaRegistry, SchemaType } from '@kafkajs/confluent-schema-registry';
 import { Kafka, Partitioners, logLevel } from 'kafkajs';
 
-import { loadConfig, runMain } from './common.js';
+import { kafkaClientConfig, loadConfig, runMain, schemaRegistryConfig, type Config } from './common.js';
 
 export const FAILURES = 6;
 
@@ -81,52 +81,71 @@ export function buildBurst(accountId: string, ipAddress: string, now: Date): Log
   });
 }
 
-async function main(): Promise<void> {
-  const config = loadConfig(['KAFKA_BOOTSTRAP_SERVERS', 'SCHEMA_REGISTRY_URL', 'SN_SERVICE_ACCOUNT', 'SN_API_KEY', 'LOGIN_TOPIC']);
-  const topic = config.get('LOGIN_TOPIC');
-  const username = config.get('SN_SERVICE_ACCOUNT');
-  const password = config.get('SN_API_KEY');
+/** What publish uses from a producer: the one from loginProducer fits, and so do the test fakes. */
+export interface LoginProducer {
+  send(topic: string, messages: Array<{ key: string; value: LoginEvent }>): Promise<void>;
+  disconnect(): Promise<void>;
+}
 
-  const registry = new SchemaRegistry({ host: config.get('SCHEMA_REGISTRY_URL'), auth: { username, password } });
-  const kafka = new Kafka({
-    clientId: 'hello-inject',
-    brokers: config
-      .get('KAFKA_BOOTSTRAP_SERVERS')
-      .split(',')
-      .map((broker) => broker.trim())
-      .filter(Boolean),
-    ssl: true,
-    // StreamNative Cloud: the service-account principal, and the raw API key.
-    sasl: { mechanism: 'plain', username, password },
-    logLevel: logLevel.NOTHING,
-    retry: { retries: 2 },
-  });
-  const producer = kafka.producer({ idempotent: false, allowAutoTopicCreation: false, createPartitioner: Partitioners.DefaultPartitioner });
-
-  const accountId = newAccountId();
-  const ipAddress = newIp();
-  let failure: unknown = null;
+/**
+ * Write the records, each keyed by its account, and wait for Kafka to confirm them.
+ *
+ * Returns what went wrong, if anything.
+ */
+export async function publish(producer: LoginProducer, topic: string, records: LoginEvent[]): Promise<string[]> {
   try {
-    // Write with the schema the topic already has; never register a new one.
-    const schemaId = await registry.getLatestSchemaId(`${topic}-value`);
-    const messages = await Promise.all(
-      buildBurst(accountId, ipAddress, new Date()).map(async (record) => ({ key: accountId, value: await registry.encode(schemaId, record) })),
+    // Encoding looks the schema up in Schema Registry, so it can fail here too.
+    await producer.send(
+      topic,
+      records.map((record) => ({ key: record.account_id, value: record })),
     );
-    await producer.connect();
-    await producer.send({ topic, acks: -1, messages });
   } catch (err) {
-    failure = err;
+    return [err instanceof Error ? err.message : String(err)];
   } finally {
     await producer.disconnect().catch(() => {});
   }
+  return [];
+}
 
-  if (failure) {
-    const reason = failure instanceof Error ? failure.message : String(failure);
-    console.error(`Could not write to ${topic}: ${reason}\nRun \`npm run doctor\` to check your Kafka access.`);
+/**
+ * A producer of Avro login events.
+ *
+ * By default it writes with the schema the topic already has and never registers
+ * a new one. Pass `schema` to register it first: that is how seed.ts fills a new topic.
+ */
+export function loginProducer(config: Config, { schema }: { schema?: string } = {}): LoginProducer {
+  const registry = new SchemaRegistry(schemaRegistryConfig(config));
+  const kafka = new Kafka({ clientId: 'hello-inject', ...kafkaClientConfig(config), logLevel: logLevel.NOTHING, retry: { retries: 2 } });
+  const producer = kafka.producer({ idempotent: false, allowAutoTopicCreation: false, createPartitioner: Partitioners.DefaultPartitioner });
+
+  return {
+    async send(topic, messages) {
+      const subject = `${topic}-value`;
+      const schemaId = schema
+        ? (await registry.register({ type: SchemaType.AVRO, schema }, { subject })).id
+        : await registry.getLatestSchemaId(subject);
+      const encoded = await Promise.all(messages.map(async ({ key, value }) => ({ key, value: await registry.encode(schemaId, value) })));
+      await producer.connect();
+      await producer.send({ topic, acks: -1, messages: encoded });
+    },
+    disconnect: () => producer.disconnect(),
+  };
+}
+
+async function main(): Promise<void> {
+  const config = loadConfig(['KAFKA_BOOTSTRAP_SERVERS', 'SCHEMA_REGISTRY_URL', 'LOGIN_TOPIC']);
+  const topic = config.get('LOGIN_TOPIC');
+  const producer = loginProducer(config);
+
+  const accountId = newAccountId();
+  const ipAddress = newIp();
+  const errors = await publish(producer, topic, buildBurst(accountId, ipAddress, new Date()));
+  if (errors.length > 0) {
+    console.error(`Could not write to ${topic}: ${errors[0]}\nRun \`npm run doctor\` to check your Kafka access.`);
     process.exit(1);
   }
   console.log(`Injected ${FAILURES} failed logins + 1 success for ${accountId} from ${ipAddress} into ${topic}.`);
-  console.log(`Ask your agent again, or check in SQL Studio:  SELECT * FROM login_failures WHERE account_id = '${accountId}';`);
+  console.log(`Ask your agent again, or run this SQL:  SELECT * FROM login_failures WHERE account_id = '${accountId}';`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

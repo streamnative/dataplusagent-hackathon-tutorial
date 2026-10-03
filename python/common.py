@@ -9,6 +9,7 @@ from __future__ import annotations
 import getpass
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -17,7 +18,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterator, Mapping
 
 from dotenv import dotenv_values
 from orca import APIConnectionError, APIStatusError, ConflictError, NotFoundError, Orca
@@ -25,11 +26,18 @@ from orca.types import Agent
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# A quiet event stream is kept open with empty frames. The SDK skips each one and
+# logs a warning; keep those out of the turn's output.
+logging.getLogger("orca._streaming").setLevel(logging.ERROR)
+
 # ------------------------------------------------------------------ config --
 
 
 class ConfigError(RuntimeError):
-    """The team card (.env) is missing something."""
+    """Your .env is missing something."""
+
+
+STACKS = ("cloud", "local")
 
 
 @dataclass(frozen=True)
@@ -40,18 +48,38 @@ class Config:
     def __getitem__(self, name: str) -> str:
         return self.values[name]
 
+    @property
+    def stack(self) -> str:
+        """`cloud`: your team card on StreamNative Cloud. `local`: the stack on your laptop."""
+        stack = self.values.get("TUTORIAL_STACK", "cloud")
+        if stack not in STACKS:
+            raise ConfigError("TUTORIAL_STACK must be cloud or local.")
+        return stack
+
+    def require(self, *names: str) -> None:
+        missing = [name for name in names if name not in self.values]
+        if missing:
+            raise ConfigError(f"Missing {', '.join(missing)}. {setup_hint(self.values)}")
+
+
+def setup_hint(values: Mapping[str, str]) -> str:
+    """How to get a complete .env, for the stack this one is for."""
+    if values.get("TUTORIAL_STACK") == "local":
+        return "Run local/write-env.sh in the repo root to write .env again (Local course, Lab 0)."
+    return (
+        "Copy .env.cloud.example to .env in the repo root and fill it in from your team card, "
+        "or run local/write-env.sh for the Local course."
+    )
+
 
 def load_config(required: list[str], env: Mapping[str, str] | None = None) -> Config:
-    """Read the team card: the repo's .env file, overridden by exported variables."""
+    """Read .env in the repo root, overridden by exported variables."""
     if env is None:
         env = {**dotenv_values(REPO_ROOT / ".env"), **os.environ}
     values = {name: value.strip() for name, value in env.items() if value and value.strip()}
-    missing = [name for name in required if name not in values]
-    if missing:
-        raise ConfigError(
-            f"Missing {', '.join(missing)}. Copy .env.example to .env in the repo root and fill it in from your team card."
-        )
-    return Config(values=values, participant=_slug(values.get("PARTICIPANT") or getpass.getuser()))
+    config = Config(values=values, participant=_slug(values.get("PARTICIPANT") or getpass.getuser()))
+    config.require(*required)
+    return config
 
 
 def _slug(raw: str) -> str:
@@ -63,7 +91,7 @@ def _slug(raw: str) -> str:
 
 
 class State:
-    """Remembers the ids your scripts created, in .orca-state/<participant>.json."""
+    """Remembers the ids your scripts created, in .orca-state/."""
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
@@ -79,7 +107,9 @@ class State:
 
 
 def state_for(config: Config) -> State:
-    return State(REPO_ROOT / ".orca-state" / f"{config.participant}.json")
+    """Each stack has its own Agent Engine, so each keeps its ids in its own file."""
+    suffix = ".local" if config.stack == "local" else ""
+    return State(REPO_ROOT / ".orca-state" / f"{config.participant}{suffix}.json")
 
 
 # ------------------------------------------------------- agent definitions --
@@ -87,9 +117,9 @@ def state_for(config: Config) -> State:
 _PLACEHOLDER = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
 
-def load_layer(name: str) -> dict[str, Any]:
-    """Read agent/<name>.json: the same file the CLI and TypeScript paths use."""
-    return json.loads((REPO_ROOT / "agent" / f"{name}.json").read_text())
+def load_layer(name: str, stack: str = "cloud") -> dict[str, Any]:
+    """Read agent/<stack>/<name>.json: the same file the CLI and TypeScript paths use."""
+    return json.loads((REPO_ROOT / "agent" / stack / f"{name}.json").read_text())
 
 
 def agent_params(layer: dict[str, Any], config: Config) -> dict[str, Any]:
@@ -111,7 +141,7 @@ def agent_params(layer: dict[str, Any], config: Config) -> dict[str, Any]:
 
 
 def _fill(value: Any, config: Config) -> Any:
-    """Replace ${NAME} placeholders with values from the team card."""
+    """Replace ${NAME} placeholders with values from .env."""
     if isinstance(value, str):
         return _PLACEHOLDER.sub(lambda match: _lookup(match.group(1), config), value)
     if isinstance(value, list):
@@ -123,8 +153,35 @@ def _fill(value: Any, config: Config) -> Any:
 
 def _lookup(name: str, config: Config) -> str:
     if name not in config.values:
-        raise ConfigError(f"Missing {name}: the agent definition needs it. Add it to .env from your team card.")
+        raise ConfigError(f"Missing {name}: the agent definition needs it. {setup_hint(config.values)}")
     return config.values[name]
+
+
+# ------------------------------------------------ Kafka and Schema Registry --
+
+
+def kafka_client_config(config: Config) -> dict[str, str]:
+    """How to reach Kafka: your team's cluster over TLS, or the broker on your laptop."""
+    config.require("KAFKA_BOOTSTRAP_SERVERS")
+    if config.stack == "local":
+        return {"bootstrap.servers": config["KAFKA_BOOTSTRAP_SERVERS"], "security.protocol": "PLAINTEXT"}
+    config.require("SN_SERVICE_ACCOUNT", "SN_API_KEY")
+    return {
+        "bootstrap.servers": config["KAFKA_BOOTSTRAP_SERVERS"],
+        "security.protocol": "SASL_SSL",
+        "sasl.mechanisms": "PLAIN",
+        # StreamNative Cloud: the service-account principal, and the raw API key.
+        "sasl.username": config["SN_SERVICE_ACCOUNT"],
+        "sasl.password": config["SN_API_KEY"],
+    }
+
+
+def schema_registry_config(config: Config) -> dict[str, str]:
+    config.require("SCHEMA_REGISTRY_URL")
+    if config.stack == "local":
+        return {"url": config["SCHEMA_REGISTRY_URL"]}
+    config.require("SN_SERVICE_ACCOUNT", "SN_API_KEY")
+    return {"url": config["SCHEMA_REGISTRY_URL"], "basic.auth.user.info": f"{config['SN_SERVICE_ACCOUNT']}:{config['SN_API_KEY']}"}
 
 
 # ------------------------------------------------- Agent Engine resources --
@@ -192,7 +249,7 @@ def authorize_mcp(vault_id: str, config: Config) -> None:
     except OSError:
         raise ConfigError("Install ork with MCP OAuth proxy support and put it on PATH (see docs/before-you-arrive.md).") from None
     if result.returncode:
-        raise ConfigError("MCP OAuth authorization failed. Check the ork error above; normally leave SN_MCP_OAUTH_ISSUER empty for discovery, then rerun L3/L4.")
+        raise ConfigError("MCP OAuth authorization failed. Check the ork error above; normally leave SN_MCP_OAUTH_ISSUER empty for discovery, then run the Lab 3 script again.")
 
 
 def ensure_vault(client: Any, state: State, name: str, config: Config) -> str:
@@ -227,6 +284,31 @@ def ensure_vault(client: Any, state: State, name: str, config: Config) -> str:
     return vault.id
 
 
+def mcp_vault_ids(client: Any, state: State, config: Config) -> list[str]:
+    """The vaults a session needs to call the MCP server.
+
+    StreamNative Cloud's MCP server wants a credential, kept in a vault. The MCP
+    server on your laptop takes none, so the local stack has no vault.
+    """
+    if config.stack == "local":
+        return []
+    return [ensure_vault(client, state, f"hello-vault-{config.participant}", config)]
+
+
+def open_session(client: Any, state: State, environment_id: str, agent: Agent, title: str, *, vault_ids: list[str] = ()) -> Any:
+    """One conversation, pinned to this exact agent version. Its id is remembered for your checks."""
+    params: dict[str, Any] = {
+        "environment_id": environment_id,
+        "agent": {"type": "agent", "id": agent.id, "version": agent.version},
+        "title": title,
+    }
+    if vault_ids:
+        params["vault_ids"] = list(vault_ids)
+    session = client.sessions.create(**params)
+    state.set("session_id", session.id)
+    return session
+
+
 def _live(retrieve: Callable[[str], Any], resource_id: str | None) -> Any:
     """The remembered resource, or None if it was never created, deleted, or archived."""
     if not resource_id:
@@ -248,12 +330,13 @@ def chat(
     confirm: Callable[[dict[str, Any]], bool] | None = None,
     ask: Callable[[str], str] = input,
     out: Callable[[str], None] = print,
+    send_first: bool = False,
 ) -> None:
     """Ask `first`, then whatever the participant types next, until they type nothing."""
     question = first
     while question:
         out(f"[you]    {question}")
-        run_turn(client, session_id, question, confirm=confirm, out=out)
+        run_turn(client, session_id, question, confirm=confirm, out=out, send_first=send_first)
         question = ask("\nAsk again (Enter to quit): ").strip()
 
 
@@ -320,54 +403,96 @@ def run_turn(
     *,
     confirm: Callable[[dict[str, Any]], bool] | None = None,
     out: Callable[[str], None] = print,
+    send_first: bool = False,
 ) -> TurnResult:
     """Send one user message and follow the session until the agent's turn ends.
 
     `confirm(tool_use)` is asked whenever a tool with an `always_ask` policy wants
     to run; return True to allow it, False to deny it.
+
+    `send_first` is for the Agent Engine that `ork local` runs. It answers a stream
+    opened on a quiet session only at its next keep-alive, 15 seconds later.
     """
     events = client.sessions.events
+    message = [{"type": "user.message", "content": [{"type": "text", "text": text}]}]
+    if send_first:
+        # Speak first, then follow the session from its start: that engine replays
+        # the log, and this turn begins right after our own message in it.
+        sent = events.send(session_id, events=message)
+        if not sent.data:
+            raise TurnError("The Agent Engine did not confirm the message it was sent.")
+        with events.stream(session_id, from_cursor="0") as stream:
+            return _follow(_after(stream, sent.data[0].id), events, session_id, confirm, out)
+
     # Listen first, then speak: an event emitted between the two would be lost.
     with events.stream(session_id) as stream:
-        sent = events.send(session_id, events=[{"type": "user.message", "content": [{"type": "text", "text": text}]}])
+        sent = events.send(session_id, events=message)
         # Some servers replay the whole transcript on connect. Everything
         # processed before our message belongs to an earlier turn.
         since = sent.data[0].processed_at if sent.data else None
-        seen: set[str] = set()
-        tool_uses: dict[str, dict[str, Any]] = {}
-        replies: list[str] = []
-        last_error = ""
+        return _follow(_not_before(stream, since), events, session_id, confirm, out)
 
-        for raw in stream:
-            event = raw.to_dict()
-            if event["id"] in seen or _before(event.get("processed_at"), since):
+
+def _after(stream: Any, message_id: str) -> Iterator[dict[str, Any]]:
+    """The events that follow our own message in a replay of the session."""
+    reached = False
+    for raw in stream:
+        event = raw.to_dict()
+        if reached:
+            yield event
+        elif event["id"] == message_id:
+            reached = True
+
+
+def _not_before(stream: Any, since: str | None) -> Iterator[dict[str, Any]]:
+    """The events that were not processed before our message."""
+    for raw in stream:
+        event = raw.to_dict()
+        if not _before(event.get("processed_at"), since):
+            yield event
+
+
+def _follow(
+    turn: Iterator[dict[str, Any]],
+    events: Any,
+    session_id: str,
+    confirm: Callable[[dict[str, Any]], bool] | None,
+    out: Callable[[str], None],
+) -> TurnResult:
+    """Print this turn's events, answer its requests for approval, and return at its end."""
+    seen: set[str] = set()
+    tool_uses: dict[str, dict[str, Any]] = {}
+    replies: list[str] = []
+    last_error = ""
+
+    for event in turn:
+        if event["id"] in seen:
+            continue
+        seen.add(event["id"])
+        kind = event["type"]
+
+        if kind == "agent.message":
+            reply = "".join(b.get("text", "") for b in event.get("content", []) if b.get("type") == "text")
+            replies.append(reply)
+            out(f"[agent]  {reply}")
+        elif kind == "agent.mcp_tool_use":
+            tool_uses[event["id"]] = event
+            out(_shorten(f"[tool]   {event.get('name')} {json.dumps(event.get('input', {}))}"))
+        elif kind == "agent.mcp_tool_result":
+            label = "error" if event.get("is_error") else "result"
+            out(_shorten(f"[{label}] {_content_text(event.get('content'))}"))
+        elif kind == "session.error":
+            error = event.get("error") or {}
+            last_error = error.get("message") or error.get("type") or "unknown error"
+            out(f"[error]  {last_error}" + (" (retrying)" if _will_retry(event) else ""))
+        elif kind == "session.status_idle":
+            stop = event.get("stop_reason") or {}
+            if stop.get("type") == "requires_action":
+                _answer_approvals(events, session_id, stop.get("event_ids", []), tool_uses, confirm)
                 continue
-            seen.add(event["id"])
-            kind = event["type"]
-
-            if kind == "agent.message":
-                reply = "".join(b.get("text", "") for b in event.get("content", []) if b.get("type") == "text")
-                replies.append(reply)
-                out(f"[agent]  {reply}")
-            elif kind == "agent.mcp_tool_use":
-                tool_uses[event["id"]] = event
-                out(_shorten(f"[tool]   {event.get('name')} {json.dumps(event.get('input', {}))}"))
-            elif kind == "agent.mcp_tool_result":
-                label = "error" if event.get("is_error") else "result"
-                out(_shorten(f"[{label}] {_content_text(event.get('content'))}"))
-            elif kind == "session.error":
-                error = event.get("error") or {}
-                last_error = error.get("message") or error.get("type") or "unknown error"
-                retrying = (event.get("retry_status") or {}).get("will_retry")
-                out(f"[error]  {last_error}" + (" (retrying)" if retrying else ""))
-            elif kind == "session.status_idle":
-                stop = event.get("stop_reason") or {}
-                if stop.get("type") == "requires_action":
-                    _answer_approvals(events, session_id, stop.get("event_ids", []), tool_uses, confirm)
-                    continue
-                if stop.get("type") == "end_turn":
-                    return TurnResult(text="\n".join(replies))
-                raise TurnError(f"The agent stopped ({stop.get('type')}): {last_error or 'no details'}")
+            if stop.get("type") == "end_turn":
+                return TurnResult(text="\n".join(replies))
+            raise TurnError(f"The agent stopped ({stop.get('type')}): {last_error or 'no details'}")
 
     raise TurnError("The event stream ended before the agent finished its turn.")
 
@@ -383,6 +508,13 @@ def _answer_approvals(events: Any, session_id: str, event_ids: list[str], tool_u
             decision["deny_message"] = DENY_MESSAGE
         decisions.append(decision)
     events.send(session_id, events=decisions)
+
+
+def _will_retry(event: dict[str, Any]) -> bool:
+    """Servers report a retry in one of two places: beside the error, or inside it."""
+    if (event.get("retry_status") or {}).get("will_retry"):
+        return True
+    return ((event.get("error") or {}).get("retry_status") or {}).get("type") == "retrying"
 
 
 def _before(processed_at: str | None, since: str | None) -> bool:

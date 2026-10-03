@@ -1,8 +1,24 @@
 /** doctor.ts: the decisions behind each check (the network probes are exercised end to end). */
 
+import { existsSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
-import { checkLoginSchema, checkMcpTools, checkNode, checkOrcaBaseUrl, errorText, kafkaHint, parseMcpResponse } from '../src/doctor.js';
+import {
+  check as newCheck,
+  checkLoginSchema,
+  checkMcpQuery,
+  checkMcpTools,
+  checkNode,
+  checkOrcaBaseUrl,
+  errorText,
+  kafkaHint,
+  mcpHeaders,
+  parseMcpResponse,
+  requiredFor,
+  schemaRegistryHint,
+  summarize,
+} from '../src/doctor.js';
 
 describe('checkOrcaBaseUrl', () => {
   it.each(['https://ws.example.com', 'https://ws.example.com/'])('a host root URL passes: %s', (url) => {
@@ -52,6 +68,18 @@ describe('checkLoginSchema', () => {
 
     expect(check.ok).toBe(false);
     expect(check.fix).toContain('outcome');
+  });
+
+  it.each(['cloud', 'local'] as const)('the `outcome` fix names SQL files that exist for the %s stack', (stack) => {
+    const check = checkLoginSchema([...LOGIN_FIELDS.filter((f) => f !== 'result'), 'outcome'], stack);
+
+    const named = check.fix?.match(/sql\/[\w/.]+\.sql/g) ?? [];
+
+    expect(named).toHaveLength(2);
+    for (const name of named) {
+      expect(name.startsWith(`sql/${stack}/`)).toBe(true);
+      expect(existsSync(new URL(`../../${name}`, import.meta.url))).toBe(true);
+    }
   });
 });
 
@@ -133,5 +161,129 @@ describe('local Agent Engine URL', () => {
     const result = checkOrcaBaseUrl('http://127.0.0.1:8080/v1');
     expect(result.ok).toBe(false);
     expect(result.fix).toContain('http://127.0.0.1:8080');
+  });
+});
+
+describe('the two stacks', () => {
+  it('the cloud stack needs the team card', () => {
+    const required = requiredFor('cloud');
+
+    expect(required).toEqual(expect.arrayContaining(['SN_API_KEY', 'SN_SERVICE_ACCOUNT', 'SN_MCP_URL']));
+    expect(required).not.toContain('RW_MCP_URL');
+  });
+
+  it('the local stack needs no team card values', () => {
+    const required = requiredFor('local');
+
+    expect(required).toEqual(expect.arrayContaining(['ORCA_API_KEY', 'KAFKA_BOOTSTRAP_SERVERS', 'SCHEMA_REGISTRY_URL', 'RW_MCP_URL', 'RW_MCP_LOCAL_URL']));
+    expect(required.filter((name) => name.startsWith('SN_'))).toEqual([]);
+  });
+
+  it('the local MCP server must offer the tools the local agent uses', () => {
+    const offered = ['run_select_query', 'describe_table', 'insert_multiple_rows', 'drop_table', 'list_databases'];
+
+    expect(checkMcpTools(offered, 'local').ok).toBe(true);
+  });
+
+  it('missing local MCP tools are named and the fix is local', () => {
+    const check = checkMcpTools(['run_select_query'], 'local');
+
+    expect(check.ok).toBe(false);
+    expect(check.detail).toContain('describe_table');
+    expect(check.detail).toContain('insert_multiple_rows');
+    expect(check.fix).not.toContain('facilitator');
+  });
+
+  it('a SELECT through MCP that returns a row passes', () => {
+    expect(checkMcpQuery('[\n  {\n    "ready": 1\n  }\n]').ok).toBe(true);
+  });
+
+  it.each(['Error executing query: connection refused', '[]', 'not json'])(
+    'a SELECT through MCP that returns no row fails with what came back: %s',
+    (text) => {
+      const check = checkMcpQuery(text);
+
+      expect(check.ok).toBe(false);
+      expect(check.detail).toContain(text);
+    },
+  );
+
+  it.each([
+    ['KafkaError{code=_TRANSPORT,val=-195,str="127.0.0.1:29092/bootstrap: Connect to ipv4#127.0.0.1:29092 failed: Connection refused"}', 'local/compose.yaml'],
+    // The same failure, as kafkajs reports it.
+    ['KafkaJSNumberOfRetriesExceeded: Connection error: connect ECONNREFUSED 127.0.0.1:29092', 'local/compose.yaml'],
+    ['not found', 'Lab 0'],
+  ])('local Kafka error %s points at the local stack', (error, advice) => {
+    const hint = kafkaHint(error, 'local');
+
+    expect(hint).toContain(advice);
+    expect(hint).not.toContain('facilitator');
+    expect(hint).not.toContain('team card');
+  });
+
+  it('a local schema that is not registered yet points at the seeder', () => {
+    const hint = schemaRegistryHint(`HTTP 404: {"error_code":40401,"message":"Subject 'security.login_events-value' not found."}`, 'local');
+
+    expect(hint).toContain('npm run seed');
+    expect(hint).toContain('Lab 0');
+  });
+
+  it('an unreachable local schema registry points at the streaming stack', () => {
+    const hint = schemaRegistryHint('fetch failed: connect ECONNREFUSED 127.0.0.1:18081', 'local');
+
+    expect(hint).toContain('local/compose.yaml');
+    expect(hint).not.toContain('seed');
+  });
+
+  it.each(['fetch failed: connect ECONNREFUSED 10.0.0.1:443', 'HTTP 401: unauthorized'])('cloud schema registry error %s points at the team card', (error) => {
+    const hint = schemaRegistryHint(error);
+
+    expect(hint).toContain('SCHEMA_REGISTRY_URL');
+    expect(hint).not.toContain('compose');
+  });
+
+  it('the MCP probe sends a bearer token only when it has one', () => {
+    expect(mcpHeaders('the-token').Authorization).toBe('Bearer the-token');
+    expect(Object.keys(mcpHeaders())).not.toContain('Authorization');
+  });
+});
+
+describe('the verdict', () => {
+  it('all checks passing is a zero exit', () => {
+    const { code, verdict } = summarize([newCheck('a', true), newCheck('b', true)]);
+
+    expect(code).toBe(0);
+    expect(verdict).toContain('ready');
+  });
+
+  it('a failed check is a nonzero exit and is counted', () => {
+    const { code, verdict } = summarize([newCheck('a', true), newCheck('b', false, 'boom', 'fix it')]);
+
+    expect(code).toBe(1);
+    expect(verdict).toContain('1 check(s) failed');
+  });
+
+  it('a waiting check does not fail the doctor', () => {
+    const waiting = newCheck('MCP OAuth', false, 'no tutorial vault yet', 'Lab 3 authorizes it.', { wait: true });
+
+    const { code, verdict } = summarize([newCheck('a', true), waiting]);
+
+    expect(code).toBe(0);
+    expect(verdict).toContain('1 check(s) wait');
+  });
+
+  it('a failure wins over a waiting check', () => {
+    const waiting = newCheck('MCP OAuth', false, '', '', { wait: true });
+
+    const { code, verdict } = summarize([newCheck('a', false), waiting]);
+
+    expect(code).toBe(1);
+    expect(verdict).toContain('1 check(s) failed');
+  });
+
+  it('each check is labelled', () => {
+    expect(newCheck('a', true).label).toBe('PASS');
+    expect(newCheck('a', false).label).toBe('FAIL');
+    expect(newCheck('a', false, '', '', { wait: true }).label).toBe('WAIT');
   });
 });

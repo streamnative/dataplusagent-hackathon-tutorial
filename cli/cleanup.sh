@@ -4,7 +4,7 @@
 #
 #   ./cleanup.sh
 #
-# Your SQL objects stay; drop them with sql/99_reset.sql.
+# Your SQL objects stay; drop them with sql/cloud/99_reset.sql or sql/local/99_reset.sql.
 set -euo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"

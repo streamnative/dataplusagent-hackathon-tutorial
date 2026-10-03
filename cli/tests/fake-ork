@@ -12,7 +12,9 @@
 #   reactions/<n>.ndjson   events the agent emits after the n-th send (message or tool confirmation)
 #   history.ndjson         events already in every new session's transcript (an earlier turn)
 # Switches: FAKE_ORK_BARE=1 (stream lines without the SSE wrapper), FAKE_ORK_NO_ECHO=1
-# (sent events are not echoed), FAKE_ORK_TAKEN_ENVS="name ..." (409 on create),
+# (sent events are not echoed), FAKE_ORK_UNSTAMPED=1 (sent events have no processed_at
+# yet, as on ork local), FAKE_ORK_HANG=1 (a stream stays open after its frames),
+# FAKE_ORK_TAKEN_ENVS="name ..." (409 on create),
 # FAKE_ORK_FAIL="<command words>:<status>" (fail that command).
 set -euo pipefail
 
@@ -116,7 +118,8 @@ append_event() {  # append_event <session> <event json>
 
 record_send() {  # record_send <session> <user event json>  -> prints the persisted event list
   local event reaction line
-  event=$(jq -c --arg id "evt_user_$(counter user)" --arg now "$(now)" '. + {id: $id, processed_at: $now}' <<<"$2")
+  event=$(jq -c --arg id "evt_user_$(counter user)" --arg now "$(now)" --arg unstamped "${FAKE_ORK_UNSTAMPED:-}" \
+    '. + {id: $id, processed_at: (if $unstamped == "" then $now else null end)}' <<<"$2")
   [ -n "${FAKE_ORK_NO_ECHO:-}" ] || append_event "$1" "$event"
   reaction="$dir/reactions/$(counter sends).ndjson"
   if [ -f "$reaction" ]; then
@@ -254,6 +257,8 @@ case "$command" in
     else
       jq -c --argjson cursor "${cursor:-0}" 'select((.id | tonumber) >= $cursor)' "$dir/sessions/$session.ndjson"
     fi
+    # exec, so that stopping this process leaves no sleeper behind.
+    [ -z "${FAKE_ORK_HANG:-}" ] || exec sleep 30
     sleep 0.1
     ;;
   *)

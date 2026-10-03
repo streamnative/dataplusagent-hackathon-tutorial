@@ -13,6 +13,7 @@
     "l3": "tsx src/l3-live-context.ts",
     "l4": "tsx src/l4-act.ts",
     "inject": "tsx src/inject.ts",
+    "seed": "tsx src/seed.ts",
     "doctor": "tsx src/doctor.ts",
     "cleanup": "tsx src/cleanup.ts",
     "test": "vitest run",

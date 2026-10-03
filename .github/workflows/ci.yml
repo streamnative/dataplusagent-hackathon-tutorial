@@ -42,8 +42,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck cli/*.sh cli/tests/*.sh cli/tests/fake-ork
+      - run: shellcheck cli/*.sh cli/tests/*.sh cli/tests/fake-ork lab-ork
       - run: cli/tests/run.sh
+
+  local:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck local/*.sh local/tests/*.sh
+      - run: local/tests/run.sh
+      - name: The Compose file is valid
+        run: docker compose -f local/compose.yaml config -q
+
+  labs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck scripts/*.sh scripts/tests/*.sh
+      - run: scripts/tests/run.sh
+      - name: Every lab has its steps, checks, quiz and solution, and every link resolves
+        run: scripts/check-labs.sh
 
   no-credentials:
     runs-on: ubuntu-latest

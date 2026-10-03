@@ -5,7 +5,7 @@ import pytest
 from orca import AuthenticationError
 
 from common import Config, ConfigError, State, TurnError, ask_human, chat, cleanup, ensure_agent, ensure_environment, ensure_vault, run_main
-from fakes import FakeSessionEvents, client_with_events, fake_client
+from fakes import FakeSessionEvents, OrkLocalSessionEvents, client_with_events, fake_client
 from test_ensure import MCP_URL, params
 
 
@@ -22,6 +22,17 @@ def test_chat_keeps_asking_until_the_participant_enters_nothing():
 
     sent = [c[2][0]["content"][0]["text"] for c in events.calls if c[0] == "send"]
     assert sent == ["who is under attack?", "and now?"]
+
+
+def test_chat_sends_first_on_every_turn_when_asked_to():
+    events = OrkLocalSessionEvents([reply("first"), reply("second")])
+    answers = iter(["and now?", ""])
+    shown: list[str] = []
+
+    chat(client_with_events(events), "sess_1", "who is under attack?", ask=lambda _prompt: next(answers), out=shown.append, send_first=True)
+
+    assert [call[0] for call in events.calls] == ["send", "stream", "send", "stream"]
+    assert [line for line in shown if line.startswith("[agent]")] == ["[agent]  first", "[agent]  second"]
 
 
 @pytest.mark.parametrize("typed, allowed", [("y", True), ("YES", True), (" yes ", True), ("", False), ("n", False), ("nope", False)])

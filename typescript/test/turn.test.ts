@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { TurnError, runTurn } from '../src/common.js';
-import { FakeSessionEvents, clientWithEvents, type RawEvent } from './fakes.js';
+import { FakeSessionEvents, OrkLocalSessionEvents, clientWithEvents, type RawEvent } from './fakes.js';
 
 const text = (t: string) => [{ type: 'text', text: t }];
 
@@ -138,7 +138,35 @@ describe('runTurn', () => {
     const { result, lines } = await drive([[retrying, { id: 'evt_a', type: 'agent.message', content: text('ok') }, idle('end_turn')]]);
 
     expect(result.text).toBe('ok');
-    expect(lines.some((line) => line.includes('model busy'))).toBe(true);
+    expect(lines.some((line) => line.includes('model busy') && line.includes('(retrying)'))).toBe(true);
+  });
+
+  it('a retry reported inside the error is marked as retrying too', async () => {
+    // The shape `ork local` sends: the retry status sits inside `error`.
+    const retrying: RawEvent = {
+      id: 'evt_err',
+      type: 'session.error',
+      error: { type: 'unknown_error', message: 'server_error (status 502)', retry_status: { type: 'retrying' } },
+    };
+
+    const { lines } = await drive([[retrying, { id: 'evt_a', type: 'agent.message', content: text('ok') }, idle('end_turn')]]);
+
+    expect(lines.some((line) => line.includes('server_error (status 502)') && line.includes('(retrying)'))).toBe(true);
+  });
+
+  it('an exhausted retry is not marked as retrying', async () => {
+    const exhausted: RawEvent = {
+      id: 'evt_err',
+      type: 'session.error',
+      error: { type: 'unknown_error', message: 'API key is invalid.', retry_status: { type: 'exhausted' } },
+    };
+    const events = new FakeSessionEvents([[exhausted, idle('retries_exhausted')]]);
+    const lines: string[] = [];
+
+    await expect(runTurn(clientWithEvents(events), 'sess_1', 'hi', { out: (l) => lines.push(l) })).rejects.toThrow(/API key is invalid\./);
+
+    expect(lines.some((line) => line.includes('API key is invalid.'))).toBe(true);
+    expect(lines.some((line) => line.includes('(retrying)'))).toBe(false);
   });
 
   it('retries exhausted raises with the last error message', async () => {
@@ -214,5 +242,100 @@ describe('runTurn', () => {
     const result = await runTurn(clientWithEvents(events), 'sess_1', 'hi', { out: () => {} });
 
     expect(result.text).toBe('new');
+  });
+});
+
+// That engine answers a stream opened on a quiet session only at its next
+// keep-alive, 15 seconds later. With sendFirst the turn speaks first and then
+// follows the session from its start.
+describe('runTurn with sendFirst: the `ork local` engine', () => {
+  async function driveLocal(reactions: RawEvent[][], options: { confirm?: (toolUse: Record<string, unknown>) => boolean } = {}) {
+    const events = new OrkLocalSessionEvents(reactions);
+    const lines: string[] = [];
+    const result = await runTurn(clientWithEvents(events), 'sess_1', 'hi', { confirm: options.confirm, out: (l) => lines.push(l), sendFirst: true });
+    return { result, lines, events };
+  }
+
+  it('sends the message, then follows the session from its start', async () => {
+    const { events } = await driveLocal([[idle('end_turn')]]);
+
+    expect(events.calls[0]).toEqual(['send', 'sess_1', [{ type: 'user.message', content: [{ type: 'text', text: 'hi' }] }]]);
+    // From the start of the session, not from the live edge: whatever the agent
+    // said before the stream opened is replayed, not lost.
+    expect(events.calls[1]).toEqual(['stream', 'sess_1', '0']);
+  });
+
+  it("returns and prints the agent's reply", async () => {
+    const { result, lines } = await driveLocal([[{ id: 'evt_a', type: 'agent.message', content: text('Hello!') }, idle('end_turn')]]);
+
+    expect(result.text).toBe('Hello!');
+    expect(lines.some((line) => line.includes('Hello!'))).toBe(true);
+  });
+
+  it("shows only the second turn's reply on the second turn", async () => {
+    const events = new OrkLocalSessionEvents([
+      [{ id: 'evt_a1', type: 'agent.message', content: text('first answer') }, idle('end_turn')],
+      [{ id: 'evt_a2', type: 'agent.message', content: text('second answer') }, { ...idle('end_turn'), id: 'evt_idle_2' }],
+    ]);
+    const client = clientWithEvents(events);
+    await runTurn(client, 'sess_1', 'one', { out: () => {}, sendFirst: true });
+    const lines: string[] = [];
+
+    const result = await runTurn(client, 'sess_1', 'two', { out: (l) => lines.push(l), sendFirst: true });
+
+    expect(result.text).toBe('second answer');
+    expect(lines.some((line) => line.includes('first answer'))).toBe(false);
+  });
+
+  it('does not answer an approval that an earlier turn left open', async () => {
+    const events = new OrkLocalSessionEvents([
+      // The first turn stops at a request for approval, and nobody answers it.
+      [{ ...INSERT_CALL, id: 'evt_old_tool' }, { ...idle('requires_action', ['evt_old_tool']), id: 'evt_old_wait' }],
+      [{ id: 'evt_a', type: 'agent.message', content: text('done') }, idle('end_turn')],
+    ]);
+    const client = clientWithEvents(events);
+    await expect(runTurn(client, 'sess_1', 'one', { out: () => {}, sendFirst: true })).rejects.toThrow(/approv/);
+    const asked: unknown[] = [];
+
+    const result = await runTurn(client, 'sess_1', 'two', {
+      confirm: (toolUse) => {
+        asked.push(toolUse);
+        return true;
+      },
+      out: () => {},
+      sendFirst: true,
+    });
+
+    expect(result.text).toBe('done');
+    expect(asked).toEqual([]);
+  });
+
+  it('approval sends allow and continues', async () => {
+    const { result, events } = await driveLocal(
+      [
+        [INSERT_CALL, idle('requires_action', ['evt_tool_1'])],
+        [{ id: 'evt_done', type: 'agent.message', content: text('Flagged acct_9123.') }, { ...idle('end_turn'), id: 'evt_idle_2' }],
+      ],
+      { confirm: () => true },
+    );
+
+    expect(events.calls[2]).toEqual(['send', 'sess_1', [{ type: 'user.tool_confirmation', tool_use_id: 'evt_tool_1', result: 'allow' }]]);
+    expect(result.text).toBe('Flagged acct_9123.');
+  });
+
+  it('treats a message the engine does not confirm as an error, not a hang', async () => {
+    const events = new OrkLocalSessionEvents([[idle('end_turn')]]);
+    events.send = async () => ({ data: [] });
+
+    await expect(runTurn(clientWithEvents(events), 'sess_1', 'hi', { out: () => {}, sendFirst: true })).rejects.toThrow(/did not confirm/);
+  });
+
+  it('the default order also works on that engine: it only waits longer', async () => {
+    const events = new OrkLocalSessionEvents([[{ id: 'evt_a', type: 'agent.message', content: text('Hello!') }, idle('end_turn')]]);
+
+    const result = await runTurn(clientWithEvents(events), 'sess_1', 'hi', { out: () => {} });
+
+    expect(result.text).toBe('Hello!');
+    expect(events.calls.map((call) => call[0])).toEqual(['stream', 'send']);
   });
 });

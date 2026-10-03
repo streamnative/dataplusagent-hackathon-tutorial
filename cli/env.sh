@@ -1,8 +1,8 @@
 # shellcheck shell=bash
-# Loads your team card for the CLI scripts. Sourced by them, never run directly.
+# Loads your .env for the CLI scripts. Sourced by them, never run directly.
 #
 #   hello_setup VAR...   read ../.env, check the named variables, point ork at
-#                        your Agent Engine, and pick your participant name.
+#                        your Agent Engine, and pick your stack and participant name.
 #
 # Variables you export in your shell win over .env, as in the Python and
 # TypeScript paths.
@@ -45,6 +45,15 @@ hello_die() {
   exit 1
 }
 
+# How to get a complete .env, for the stack this one is for.
+hello_setup_hint() {
+  if [ "$(hello_trim "${TUTORIAL_STACK:-}")" = local ]; then
+    printf '%s' "Run local/write-env.sh in the repo root to write .env again (Local course, Lab 0)."
+  else
+    printf '%s' "Copy .env.cloud.example to .env in the repo root and fill it in from your team card, or run local/write-env.sh for the Local course."
+  fi
+}
+
 hello_require() {
   local name value missing=""
   for name in "$@"; do
@@ -56,7 +65,7 @@ hello_require() {
     fi
   done
   if [ -n "$missing" ]; then
-    hello_die "Missing $missing. Copy .env.example to .env in the repo root and fill it in from your team card."
+    hello_die "Missing $missing. $(hello_setup_hint)"
   fi
 }
 
@@ -70,11 +79,17 @@ hello_slug() {
 
 hello_setup() {
   command -v ork >/dev/null ||
-    hello_die "ork (the Orca CLI) is not installed. See docs/before-you-arrive.md, or take the Python or TypeScript path."
+    hello_die "ork (the Orca CLI) is not installed. Every path uses it for the checks, and the CLI path for the lab scripts. See docs/before-you-arrive.md."
   command -v jq >/dev/null ||
     hello_die "jq is not installed. Install it (brew install jq, apt install jq, or winget install jqlang.jq) and try again."
 
   hello_load_dotenv
+  # `cloud`: your team card on StreamNative Cloud. `local`: the stack on your laptop.
+  HELLO_STACK=$(hello_trim "${TUTORIAL_STACK:-cloud}")
+  case "$HELLO_STACK" in
+    cloud | local) ;;
+    *) hello_die "TUTORIAL_STACK must be cloud or local." ;;
+  esac
   # Registry workspace keys use x-api-key; team-card keys use Bearer.
   # Keep the two CLI credentials mutually exclusive.
   if [ -n "$(hello_trim "${ORCA_API_KEY:-}")" ]; then
@@ -87,10 +102,12 @@ hello_setup() {
   fi
   export ORCA_REGISTRY_URL="$ORCA_BASE_URL"
 
-  local who
+  local who suffix=""
   who=$(printenv PARTICIPANT || true)
   [ -n "$(hello_trim "$who")" ] || who=${LOGNAME:-${USER:-${LNAME:-${USERNAME:-$(id -un 2>/dev/null || true)}}}}
   HELLO_PARTICIPANT=$(hello_slug "$who")
-  HELLO_STATE_FILE="$HELLO_REPO_ROOT/.orca-state/$HELLO_PARTICIPANT.json"
-  export HELLO_PARTICIPANT HELLO_STATE_FILE
+  # Each stack has its own Agent Engine, so each keeps its ids in its own file.
+  [ "$HELLO_STACK" = cloud ] || suffix=.local
+  HELLO_STATE_FILE="$HELLO_REPO_ROOT/.orca-state/$HELLO_PARTICIPANT$suffix.json"
+  export HELLO_STACK HELLO_PARTICIPANT HELLO_STATE_FILE
 }

@@ -1,5 +1,6 @@
 """OAuth delegation, reuse and doctor: no live browser or credentials required."""
 
+import re
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -112,11 +113,50 @@ def test_doctor_validates_vault_oauth_not_service_account_key(monkeypatch, state
         assert "keep the existing credential" in check.fix
     if status == "invalid":
         assert "credentials archive cred_oauth" in check.fix
+        assert "Lab 3" in check.fix
+    assert_names_labs_like_the_course(check)
     client.vaults.credentials.validate.assert_called_once_with(vault_id, "cred_oauth")
     direct.assert_not_called()
 
 
-def test_doctor_before_first_oauth_login_gives_setup_hint(state):
+def assert_names_labs_like_the_course(check):
+    """The course says "Lab 3", so the doctor does too: never "L3" or "L4"."""
+    assert not re.search(r"\bL[0-9]\b", f"{check.detail} {check.fix}"), check
+
+
+def test_doctor_names_the_lab_when_the_mcp_server_cannot_be_checked(state):
+    client = fake_client()
+    seed(client, state)
+    client.vaults.credentials.list = Mock(side_effect=RuntimeError("HTTP 502"))
+
+    check = probe_mcp(config(), client=client, state=state)
+
+    assert not check.ok and not check.wait
+    assert "HTTP 502" in check.detail
+    assert "Lab 3" in check.fix
+    assert_names_labs_like_the_course(check)
+
+
+def test_a_failed_oauth_login_names_the_lab_to_run_again(monkeypatch):
+    monkeypatch.setattr("common.subprocess.run", Mock(return_value=SimpleNamespace(returncode=1)))
+
+    with pytest.raises(ConfigError) as failure:
+        authorize_mcp("vlt_1", config())
+
+    assert "Lab 3" in str(failure.value)
+    assert not re.search(r"\bL[0-9]\b", str(failure.value))
+
+
+def test_doctor_before_first_oauth_login_waits_for_lab_3(state):
     check = probe_mcp(config(), client=fake_client(), state=state)
-    assert not check.ok
-    assert "Run L3" in check.fix
+    assert check.wait
+    assert check.label == "WAIT"
+    assert "Lab 3" in check.fix
+
+
+def test_doctor_waits_when_the_vault_has_no_oauth_credential_yet(state):
+    client = fake_client()
+    seed(client, state, auth_type="static_bearer")
+    check = probe_mcp(config(), client=client, state=state)
+    assert check.wait
+    assert "Lab 3" in check.fix

@@ -8,7 +8,7 @@ import { APIConnectionError, AuthenticationError } from '@runorca/orca-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Config, ConfigError, State, TurnError, askHuman, chat, cleanup, ensureAgent, ensureEnvironment, ensureVault, runMain } from '../src/common.js';
-import { FakeSessionEvents, clientWithEvents, fakeClient, type RawEvent } from './fakes.js';
+import { FakeSessionEvents, OrkLocalSessionEvents, clientWithEvents, fakeClient, type RawEvent } from './fakes.js';
 import { MCP_URL, params } from './helpers.js';
 
 function reply(t: string): RawEvent[] {
@@ -35,6 +35,21 @@ describe('chat', () => {
       .filter((c) => c[0] === 'send')
       .map((c) => ((c[2] as Array<{ content: Array<{ text: string }> }>)[0].content[0].text));
     expect(sent).toEqual(['who is under attack?', 'and now?']);
+  });
+
+  it('sends first on every turn when asked to', async () => {
+    const events = new OrkLocalSessionEvents([reply('first'), reply('second')]);
+    const answers = ['and now?', ''];
+    const shown: string[] = [];
+
+    await chat(clientWithEvents(events), 'sess_1', 'who is under attack?', {
+      ask: async () => answers.shift()!,
+      out: (line) => shown.push(line),
+      sendFirst: true,
+    });
+
+    expect(events.calls.map((call) => call[0])).toEqual(['send', 'stream', 'send', 'stream']);
+    expect(shown.filter((line) => line.startsWith('[agent]'))).toEqual(['[agent]  first', '[agent]  second']);
   });
 });
 

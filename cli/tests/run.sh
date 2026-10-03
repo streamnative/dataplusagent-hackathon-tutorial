@@ -20,13 +20,17 @@ export PATH="$WORK/bin:$PATH"
 # Nothing from the developer's own shell may leak into the tests.
 unset SN_API_KEY SN_SERVICE_ACCOUNT ORCA_BASE_URL KAFKA_BOOTSTRAP_SERVERS SCHEMA_REGISTRY_URL SN_MCP_URL \
   LOGIN_TOPIC ORCA_MODEL PARTICIPANT ORCA_API_KEY ORCA_ACCESS_TOKEN ORCA_REGISTRY_URL \
-+  SN_MCP_AUTH SN_MCP_OAUTH_ISSUER SN_MCP_OAUTH_SCOPE
+  SN_MCP_AUTH SN_MCP_OAUTH_ISSUER SN_MCP_OAUTH_SCOPE TUTORIAL_STACK RW_MCP_URL RW_MCP_LOCAL_URL
 export HELLO_ROUND_SECONDS=1 HELLO_TURN_TIMEOUT=5
 
 MCP_URL=https://mcp.example.com/mcp/x/o-test/sqlworkspace/ws-1
+LOCAL_MCP_URL=http://risingwave-mcp:8000/mcp
+# The same fingerprints the Python and TypeScript paths compute.
 SHA_L1=457f86a77738415f
 SHA_L3=ac4d0b08aca3f336
 SHA_L4=8d424c704af22671
+SHA_L3_LOCAL=bc4fde88405b950e
+SHA_L4_LOCAL=db2876f6ae6d41f8
 
 PASSED=0
 FAILED=0
@@ -39,7 +43,8 @@ fresh_repo() {  # fresh_repo <name>
   R="$WORK/repo-$1"
   mkdir -p "$R/cli" "$R/agent"
   cp "$CLI"/*.sh "$CLI/pretty.jq" "$R/cli/"
-  cp "$REPO"/agent/*.json "$R/agent/"
+  cp -R "$REPO/agent/cloud" "$REPO/agent/local" "$R/agent/"
+  cp "$REPO/lab-ork" "$R/"
   export FAKE_ORK_DIR="$R/fake"
   mkdir -p "$FAKE_ORK_DIR/reactions"
   unset FAKE_ORK_BARE FAKE_ORK_NO_ECHO FAKE_ORK_TAKEN_ENVS FAKE_ORK_FAIL
@@ -53,6 +58,17 @@ SN_SERVICE_ACCOUNT=team-07@o-test.auth.streamnative.cloud
 ORCA_BASE_URL=https://ws.example.com
 SN_MCP_URL=$MCP_URL
 SN_MCP_AUTH=static_bearer
+ORCA_MODEL=claude-sonnet-4-6
+PARTICIPANT=jane
+EOF
+}
+
+local_env() {  # what local/write-env.sh writes for the stack on your laptop
+  cat >"$R/.env" <<EOF
+TUTORIAL_STACK=local
+ORCA_BASE_URL=http://127.0.0.1:8080
+ORCA_API_KEY=local-test-key
+RW_MCP_URL=$LOCAL_MCP_URL
 ORCA_MODEL=claude-sonnet-4-6
 PARTICIPANT=jane
 EOF
@@ -73,6 +89,14 @@ run() {  # run <stdin text> <script> [args...]
   if (cd "$R/cli" && printf '%s' "$input" | ./"$script" "$@") >"$R/out" 2>"$R/err"; then STATUS=0; else STATUS=$?; fi
 }
 
+lab_ork() {  # lab_ork <args...>: the check wrapper, from the repo root
+  if (cd "$R" && ./lab-ork "$@") >"$R/out" 2>"$R/err"; then STATUS=0; else STATUS=$?; fi
+}
+
+json_is() {  # json_is <jq filter> <file>: the filter is true, and prints nothing
+  jq -e "$1" "$2" >/dev/null
+}
+
 called() {  # called <exact invocation as a JSON array>
   jq -e -s --argjson want "$1" 'any(. == $want)' "$FAKE_ORK_DIR/calls.log" >/dev/null
 }
@@ -88,6 +112,7 @@ calls_of() { jq -s --arg cmd "$1" '[.[] | select(join(" ") | startswith($cmd))] 
 out_has() { grep -qF -- "$1" "$R/out"; }
 err_has() { grep -qF -- "$1" "$R/err"; }
 state_is() { [ "$(jq -r --arg k "$1" '.[$k] // empty' "$R/.orca-state/jane.json")" = "$2" ]; }
+local_state_is() { [ "$(jq -r --arg k "$1" '.[$k] // empty' "$R/.orca-state/jane.local.json")" = "$2" ]; }
 
 check() {  # check <description> <command...>
   if "${@:2}"; then
@@ -107,8 +132,8 @@ test_missing_team_card() {
   fresh_repo missing
   run "" l1_hello.sh
   check "exits 1 without a team card" [ "$STATUS" -eq 1 ]
-  check "names every missing variable" \
-    err_has "Missing ORCA_BASE_URL, ORCA_MODEL, SN_API_KEY. Copy .env.example to .env in the repo root and fill it in from your team card."
+  check "names every missing variable, and both ways to get an .env" \
+    err_has "Missing ORCA_BASE_URL, ORCA_MODEL, SN_API_KEY. Copy .env.cloud.example to .env in the repo root and fill it in from your team card, or run local/write-env.sh for the Local course."
   check "runs no ork command" [ ! -s "$FAKE_ORK_DIR/calls.log" ]
 }
 
@@ -118,7 +143,7 @@ test_l1_creates_everything() {
   reaction 1 "$(message evt_a 'Hello!')" "$(end_turn 1)"
   run "" l1_hello.sh
   check "L1 succeeds" [ "$STATUS" -eq 0 ]
-  check "hosted team cards use only Bearer" jq -e '.access_token_set and (.api_key_set | not)' "$FAKE_ORK_DIR/auth.json"
+  check "hosted team cards use only Bearer" json_is '.access_token_set and (.api_key_set | not)' "$FAKE_ORK_DIR/auth.json"
   check "creates the environment" called '["agent","environments","create","--name","hello-env-jane","-o","json"]'
   check "creates the agent with the L1 fingerprint" called_with "agent create" "definition_sha=$SHA_L1"
   check "names the agent after the participant" called_with "agent create" "hello-agent-jane"
@@ -130,6 +155,7 @@ test_l1_creates_everything() {
   check "prints the reply" out_has "[agent]  Hello!"
   check "remembers the agent" state_is agent_id agent_1
   check "remembers the environment" state_is environment_id env_1
+  check "remembers the session, for your checks" state_is session_id sess_1
 
   # Run it again: same definition, so nothing is created or updated.
   reaction 2 "$(message evt_b 'Hello again!')" "$(end_turn 2)"
@@ -140,6 +166,7 @@ test_l1_creates_everything() {
   check "rerun reuses the environment" [ "$(calls_of "agent environments create")" -eq 1 ]
   check "takes the question from the arguments" out_has "[you]    Is anyone there?"
   check "rerun stays on version 1" out_has "hello-agent-jane v1:"
+  check "remembers the newest session" state_is session_id sess_2
 
   # L3: the same agent moves to its next version, with a vault for the MCP credential.
   reaction 3 \
@@ -197,6 +224,41 @@ EOF
   check "prints a repeated event once" [ "$(grep -cF 'new answer' "$R/out")" -eq 1 ]
 }
 
+test_turns_on_an_engine_that_neither_stamps_nor_echoes_sent_events() {
+  # The frame cursor is what keeps earlier turns out. A turn must not also need
+  # the engine to put a time on our message, or to show it on the stream.
+  fresh_repo unstamped
+  card
+  export FAKE_ORK_UNSTAMPED=1 FAKE_ORK_NO_ECHO=1
+  reaction 1 "$(message evt_new 'the answer')" "$(end_turn 8)"
+  run "" l1_hello.sh
+  unset FAKE_ORK_UNSTAMPED FAKE_ORK_NO_ECHO
+  check "a turn ends without a time on our message or an echo of it" [ "$STATUS" -eq 0 ]
+  check "and prints the answer" out_has "the answer"
+}
+
+test_a_script_stopped_mid_turn_says_nothing_about_its_stream() {
+  # The labs tell you to press Ctrl-C when the model does not answer. Stopping
+  # the script stops the stream it was following; the shell must not report that.
+  local pid tries=0
+  fresh_repo interrupt
+  card
+  export FAKE_ORK_HANG=1   # the stream stays open, as it does while the agent is thinking
+  (cd "$R/cli" && exec ./l1_hello.sh >"$R/out" 2>"$R/err") &
+  pid=$!
+  until grep -q '"stream"' "$FAKE_ORK_DIR/calls.log" 2>/dev/null || [ "$tries" -ge 100 ]; do
+    tries=$((tries + 1))
+    sleep 0.1
+  done
+  sleep 0.2
+  kill -TERM "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null && STATUS=0 || STATUS=$?
+  unset FAKE_ORK_HANG
+  check "the script was following the stream when it was stopped" grep -q '"stream"' "$FAKE_ORK_DIR/calls.log"
+  check "the stopped script exits with the signal's status" [ "$STATUS" -eq 143 ]
+  check "and prints nothing about the stream it stopped" [ ! -s "$R/err" ]
+}
+
 test_bare_stream_lines() {
   fresh_repo bare
   card
@@ -240,6 +302,16 @@ test_l4_approval() {
   run "" l3_live_context.sh
   check "an approval request without an approver fails" [ "$STATUS" -eq 1 ]
   check "says why" err_has "The agent is waiting for human approval, but this script has no approver."
+
+  # The turn's deadline is for the agent. The time a person spends reading the
+  # approval prompt must not count against it.
+  fresh_repo slow-human
+  card
+  reaction 1 "$tool_use" "$blocked"
+  reaction 2 "$(message evt_done 'Flagged acct_9123.')" "$(end_turn 8)"
+  if (cd "$R/cli" && (sleep 3; printf 'y\n') | HELLO_TURN_TIMEOUT=2 ./l4_act.sh) >"$R/out" 2>"$R/err"; then STATUS=0; else STATUS=$?; fi
+  check "an approval answered after the turn's deadline still goes through" [ "$STATUS" -eq 0 ]
+  check "and the turn continues after it" out_has "[agent]  Flagged acct_9123."
 }
 
 test_errors() {
@@ -251,6 +323,25 @@ test_errors() {
   run "" l1_hello.sh
   check "a retrying error is not fatal" [ "$STATUS" -eq 0 ]
   check "but it is shown" out_has "[error]  model busy (retrying)"
+
+  # `ork local` reports the retry inside the error.
+  fresh_repo retrying-nested
+  card
+  reaction 1 \
+    '{"id":"evt_err","type":"session.error","error":{"type":"unknown_error","message":"server_error (status 502)","retry_status":{"type":"retrying"}}}' \
+    "$(message evt_ok ok)" "$(end_turn nested)"
+  run "" l1_hello.sh
+  check "a retry reported inside the error is not fatal" [ "$STATUS" -eq 0 ]
+  check "and is marked as retrying too" out_has "[error]  server_error (status 502) (retrying)"
+
+  fresh_repo exhausted-nested
+  card
+  reaction 1 \
+    '{"id":"evt_err","type":"session.error","error":{"type":"unknown_error","message":"API key is invalid.","retry_status":{"type":"exhausted"}}}' \
+    '{"id":"evt_idle_n","type":"session.status_idle","stop_reason":{"type":"retries_exhausted"}}'
+  run "" l1_hello.sh
+  check "an exhausted retry exits 1" [ "$STATUS" -eq 1 ]
+  check "and is not marked as retrying" bash -c "! grep -qF '(retrying)' '$R/out'"
 
   fresh_repo exhausted
   card
@@ -339,7 +430,120 @@ EOF
   run "" l1_hello.sh
   unset ORCA_ACCESS_TOKEN
   check "local L1 needs no team-card key" [ "$STATUS" -eq 0 ]
-  check "local key uses only x-api-key" jq -e '.api_key_set and (.access_token_set | not)' "$FAKE_ORK_DIR/auth.json"
+  check "local key uses only x-api-key" json_is '.api_key_set and (.access_token_set | not)' "$FAKE_ORK_DIR/auth.json"
+}
+
+test_local_stack() {
+  local tool_use='{"id":"evt_tool_1","type":"agent.mcp_tool_use","name":"insert_multiple_rows","mcp_server_name":"risingwave","input":{"table_name":"flagged_accounts","columns":"account_id, reason","values_list":"('"'"'acct_0042'"'"', '"'"'5 failed logins then a success'"'"')"}}'
+  local blocked='{"id":"evt_idle_ask","type":"session.status_idle","stop_reason":{"type":"requires_action","event_ids":["evt_tool_1"]}}'
+
+  fresh_repo local-stack
+  local_env
+  reaction 1 "$(message evt_a 'Hello from your laptop!')" "$(end_turn local1)"
+  run "" l1_hello.sh
+  check "local L1 succeeds" [ "$STATUS" -eq 0 ]
+  check "local L1 reads agent/local/" called_with "agent create" "definition_sha=$SHA_L1"
+  check "the local stack keeps its ids in its own file" local_state_is agent_id agent_1
+  check "and not in the cloud one" [ ! -e "$R/.orca-state/jane.json" ]
+  check "remembers the local session" local_state_is session_id sess_1
+
+  reaction 2 \
+    '{"id":"evt_q","type":"agent.mcp_tool_use","name":"run_select_query","mcp_server_name":"risingwave","input":{"query":"SELECT * FROM login_failures"}}' \
+    "$(message evt_c 'acct_0042 looks taken over.')" "$(end_turn local2)"
+  run "" l3_live_context.sh
+  check "local L3 succeeds" [ "$STATUS" -eq 0 ]
+  check "local L3 carries the local fingerprint" called_with "agent update agent_1" "definition_sha=$SHA_L3_LOCAL"
+  check "local L3 attaches the RisingWave MCP server" called_with "agent update agent_1" "name=risingwave,type=url,url=$LOCAL_MCP_URL"
+  check "the local MCP server takes no credential, so no vault is created" [ "$(calls_of "agent vaults create")" -eq 0 ]
+  check "and none is looked up" [ "$(calls_of "agent vaults")" -eq 0 ]
+  check "the local session has no vault" \
+    called '["agent","sessions","create","--agent","agent_1","--agent-version","2","--environment-id","env_1","--title","L3: live context","-o","json"]'
+  check "prints the local version line" out_has "hello-agent-jane v2: + RisingWave MCP (one read-only SQL tool)"
+  check "shows the local tool call" out_has '[tool]   run_select_query {"query": "SELECT * FROM login_failures"}'
+
+  reaction 3 "$tool_use" "$blocked"
+  reaction 4 "$(message evt_done 'Flagged acct_0042.')" "$(end_turn local4)"
+  run $'y\n' l4_act.sh
+  check "local L4 succeeds" [ "$STATUS" -eq 0 ]
+  check "local L4 carries the local fingerprint" called_with "agent update agent_1" "definition_sha=$SHA_L4_LOCAL"
+  check "asks before the local insert" out_has "[approve?] The agent wants to run insert_multiple_rows with:"
+  check "sends allow for the local insert" \
+    called '["agent","sessions","events","send","tool-confirmation","--session","sess_3","--tool-use-id","evt_tool_1","--decision","allow","-o","json"]'
+  check "local L4 creates no vault either" [ "$(calls_of "agent vaults")" -eq 0 ]
+
+  run "" cleanup.sh
+  check "local cleanup succeeds" [ "$STATUS" -eq 0 ]
+  check "local cleanup archives the agent" out_has "removed agent agent_1"
+  check "local cleanup forgets the local ids" [ ! -f "$R/.orca-state/jane.local.json" ]
+
+  fresh_repo local-missing-url
+  local_env
+  sed -i.bak '/RW_MCP_URL=/d' "$R/.env"
+  run "" l3_live_context.sh
+  check "a local .env without the MCP address fails" [ "$STATUS" -eq 1 ]
+  check "and says to write .env again" err_has "Missing RW_MCP_URL: the agent definition needs it. Run local/write-env.sh in the repo root to write .env again (Local course, Lab 0)."
+
+  fresh_repo local-missing-model
+  local_env
+  sed -i.bak '/ORCA_MODEL=/d' "$R/.env"
+  run "" l1_hello.sh
+  check "a local .env missing a value points at write-env, not the team card" \
+    err_has "Missing ORCA_MODEL. Run local/write-env.sh in the repo root to write .env again (Local course, Lab 0)."
+
+  fresh_repo bad-stack
+  card
+  echo "TUTORIAL_STACK=laptop" >>"$R/.env"
+  run "" l1_hello.sh
+  check "an unknown stack fails" [ "$STATUS" -eq 1 ]
+  check "and names the two that exist" err_has "TUTORIAL_STACK must be cloud or local."
+}
+
+test_lab_ork() {
+  fresh_repo lab-ork
+  card
+  lab_ork agent get @agent_id -o json
+  check "a placeholder with no id yet fails" [ "$STATUS" -eq 1 ]
+  check "and says a lab script has to run first" err_has "No agent_id yet"
+  check "and calls no ork" [ ! -s "$FAKE_ORK_DIR/calls.log" ]
+
+  reaction 1 "$(message evt_a 'Hello!')" "$(end_turn lab1)"
+  run "" l1_hello.sh
+  lab_ork agent get @agent_id -o json
+  check "lab-ork succeeds once the agent exists" [ "$STATUS" -eq 0 ]
+  check "fills in the agent id" called '["agent","get","agent_1","-o","json"]'
+  check "prints what ork prints" json_is '.id == "agent_1"' "$R/out"
+  check "uses the team card's Bearer key" json_is '.access_token_set and (.api_key_set | not)' "$FAKE_ORK_DIR/auth.json"
+
+  lab_ork agent sessions events stream --session @session_id --timeout 1s
+  check "fills in the session id" called '["agent","sessions","events","stream","--session","sess_1","--timeout","1s"]'
+
+  lab_ork agent environments get @environment_id -o json
+  check "fills in the environment id" called '["agent","environments","get","env_1","-o","json"]'
+
+  lab_ork agent get @nonsense -o json
+  check "anything else goes to ork as typed" called '["agent","get","@nonsense","-o","json"]'
+
+  fresh_repo lab-ork-local
+  local_env
+  reaction 1 "$(message evt_a 'Hello!')" "$(end_turn lab2)"
+  run "" l1_hello.sh
+  lab_ork agent get @agent_id -o json
+  check "lab-ork reads the local stack's ids" called '["agent","get","agent_1","-o","json"]'
+  check "and uses the local workspace key" json_is '.api_key_set and (.access_token_set | not)' "$FAKE_ORK_DIR/auth.json"
+
+  fresh_repo lab-ork-no-env
+  lab_ork agent get @agent_id -o json
+  check "lab-ork without .env fails" [ "$STATUS" -eq 1 ]
+  check "and says how to get one" err_has "Copy .env.cloud.example to .env"
+
+  # The checks of all three paths go through lab-ork, so a missing ork is not a
+  # reason to change path.
+  fresh_repo lab-ork-no-ork
+  card
+  if (cd "$R" && PATH=/usr/bin:/bin ./lab-ork agent list -o json) >"$R/out" 2>"$R/err"; then STATUS=0; else STATUS=$?; fi
+  check "lab-ork without ork fails" [ "$STATUS" -eq 1 ]
+  check "and says every path needs ork" err_has "Every path uses it"
+  check "and does not send the learner to another path" bash -c "! grep -qF 'take the Python or TypeScript path' '$R/err'"
 }
 
 test_mcp_oauth() {
@@ -359,8 +563,8 @@ EOF
   unset ORCA_ACCESS_TOKEN
   check "OAuth L3 succeeds" [ "$STATUS" -eq 0 ]
   check "OAuth invokes native discovery and browser flow" called "$(jq -cn --arg url "$MCP_URL" '["agent","vaults","credentials","create","--vault","vlt_1","--display-name","streamnative-mcp","--mcp-server-url",$url,"--oauth-issuer","https://auth.example.com/","--oauth-scope","openid profile email offline_access","-o","json"]')"
-  check "OAuth stores no static bearer credential" jq -e '.[0].auth.type == "mcp_oauth"' "$FAKE_ORK_DIR/creds/vlt_1.json"
-  check "OAuth child uses only Registry Bearer" jq -e '.access_token_set and (.api_key_set | not)' "$FAKE_ORK_DIR/auth.json"
+  check "OAuth stores no static bearer credential" json_is '.[0].auth.type == "mcp_oauth"' "$FAKE_ORK_DIR/creds/vlt_1.json"
+  check "OAuth child uses only Registry Bearer" json_is '.access_token_set and (.api_key_set | not)' "$FAKE_ORK_DIR/auth.json"
   # shellcheck disable=SC2016  # the child shell expands its own positional argument
   check "OAuth state contains no tokens" bash -c '! grep -q "test-key" "$1"' _ "$R/.orca-state/jane.json"
 
@@ -383,14 +587,19 @@ EOF
   unset SN_MCP_AUTH
   check "OAuth failure stops L3" [ "$STATUS" -ne 0 ]
   check "OAuth failure has setup guidance" err_has "MCP OAuth authorization failed"
+  check "OAuth failure names the lab to run again" err_has "run the Lab 3 script again"
   check "no session after OAuth failure" [ "$(calls_of "agent sessions create")" -eq 0 ]
 }
 
 test_mcp_oauth
 test_local_registry_key
+test_local_stack
+test_lab_ork
 test_missing_team_card
 test_l1_creates_everything
 test_turns_ignore_history_and_duplicates
+test_turns_on_an_engine_that_neither_stamps_nor_echoes_sent_events
+test_a_script_stopped_mid_turn_says_nothing_about_its_stream
 test_bare_stream_lines
 test_l4_approval
 test_errors

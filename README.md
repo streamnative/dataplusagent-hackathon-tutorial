@@ -1,443 +1,91 @@
 # Data + Agent Hackathon: hello world
 
-**Data Streaming Summit 2026 · guided tutorial · about 30 minutes**
+**Data Streaming Summit 2026 · a hands-on course in five short labs**
 
-In the next half hour you'll build an agent whose context is a live Kafka stream,
-kept fresh by streaming SQL, and that asks a human before it acts. Four short
-layers, each adding one idea. The agent steps work three ways; pick one:
+You build an agent whose context is a live Kafka stream, kept fresh by streaming
+SQL, and that asks a human before it acts. Five labs, each adding one idea.
+
+## The story
+
+Aegis Financial, a fictional bank, streams every login attempt into Kafka.
+Somewhere in that stream, an attacker is guessing passwords. Your agent spots
+them from live data, and flags the account once you say so.
+
+```mermaid
+flowchart LR
+    K["Kafka topic<br/>security.login_events"] --> S["Streaming SQL<br/>materialized view<br/>login_failures"]
+    J["inject<br/>(you, in Lab 3)"] -- "new login burst" --> K
+    S -- "SQL tools, over MCP" --> A["Orca agent<br/>hello-agent-&lt;you&gt;"]
+    A -- "insert<br/>(only if you approve)" --> F["table<br/>flagged_accounts"]
+```
+
+## Pick your course
+
+The same five labs, on two stacks.
+
+| | [Cloud course](labs/cloud/README.md) | [Local course](labs/local/README.md) |
+|---|---|---|
+| Runs on | StreamNative Cloud: your team's Kafka cluster, SQL Workspace, and a hosted Agent Engine | Your laptop: [Ursa for Kafka](https://openlakestream.org/docs/ursa-for-kafka), [RisingWave](https://risingwave.com), and the Orca Agent Engine (`ork local`) |
+| You need | A team card, handed out at the hackathon | Docker and an Anthropic API key |
+| Time | About 30 minutes | About 45 minutes, plus image downloads |
+| Start | [Lab 0: Set up](labs/cloud/00-set-up.md) | [Lab 0: Set up](labs/local/00-set-up.md) |
+
+At the hackathon, take the Cloud course: see
+[Before you arrive](docs/before-you-arrive.md). Without a team card, or to see
+every part run on your own machine, take the Local course.
+
+## Pick your path
+
+The agent steps work three ways. Pick one; a teammate can pick another.
 
 - **CLI**: the [`ork`](https://github.com/orca-ae/orca-cli) command line
 - **Python**: the [`runorca`](https://pypi.org/project/runorca/) SDK
 - **TypeScript**: the [`@runorca/orca-sdk`](https://www.npmjs.com/package/@runorca/orca-sdk) SDK
 
-## The story
+## The labs
 
-Aegis Financial, a fictional bank, streams every login attempt into Kafka.
-Somewhere in that stream, an attacker is guessing passwords. Your agent will spot
-them from live data, and flag the account once you say so.
-
-```mermaid
-flowchart LR
-    K["Kafka topic<br/>security.login_events"] --> S["SQL Workspace<br/>materialized view<br/>login_failures"]
-    J["inject<br/>(you, in L3)"] -- "new login burst" --> K
-    S -- "StreamNative MCP<br/>sql_workspace_query" --> A["Orca agent<br/>hello-agent-&lt;you&gt;"]
-    A -- "sql_workspace_insert_rows<br/>(only if you approve)" --> F["SQL table<br/>flagged_accounts"]
-```
-
-| Step | Time | Where | You | The idea |
-|---|---|---|---|---|
-| [0. Connect](#step-0-connect-3-min) | 3 min | terminal | Fill in `.env`, run the doctor | Check service access; authorize MCP with OAuth |
-| [L1. Hello, agent](#l1-hello-agent-5-min) | 5 min | CLI / Python / TS | Create an agent and chat | Agent, environment, session, events |
-| [L2. Hello, streaming SQL](#l2-hello-streaming-sql-8-min) | 8 min | SQL Workspace | Build a materialized view over the topic | Context that keeps itself fresh |
-| [L3. Agent + live context](#l3-agent--live-context-9-min) | 9 min | CLI / Python / TS | Give the agent SQL tools, inject new data | The answer changes with the data |
-| [L4. Agent acts, human approves](#l4-agent-acts-human-approves-5-min) | 5 min | CLI / Python / TS | Let the agent write, with your OK | Governed actions |
-
-## Before you start
-
-- Your **team card** from the organizers. Your team's Kafka cluster already
-  holds the login stream.
-- One path installed: see [Before you arrive](docs/before-you-arrive.md).
-
-## Step 0: Connect (3 min)
-
-Copy the template, then paste the values from your team card into `.env`:
-
-```bash
-cp .env.example .env
-```
-
-Go to your path's folder and run the doctor:
-
-| Path | Run |
-|---|---|
-| Python | `cd python && source .venv/bin/activate && python doctor.py` |
-| TypeScript | `cd typescript && npm run doctor` |
-| CLI | `cd cli`, and run the doctor from your helper language: `(cd ../python && .venv/bin/python doctor.py)` or `(cd ../typescript && npm run doctor)` |
-
-The service checks should say `PASS`. Before the first OAuth login, the MCP
-check asks you to run L3; that script opens your browser and stores the credential
-in a vault. After completing L2 and running L3, rerun the doctor to validate the
-stored OAuth credential. This check verifies MCP initialization; L3/L4 exercise
-the actual SQL tools. A failed check prints its fix. Still stuck after two tries?
-Raise your hand.
-
-For StreamNative SQL Workspace MCP, keep `SN_MCP_AUTH=oauth`, leave
-`SN_MCP_OAUTH_ISSUER` empty for automatic discovery, and use the scope from
-`.env.example`. Use an `ork` build containing [PR #8](https://github.com/orca-ae/orca-cli/pull/8)
-or current main. Its discovery accepts HTTPS issuer aliases within the same
-registrable domain and port. Only set `SN_MCP_OAUTH_ISSUER` when selecting one
-of multiple advertised `authorization_servers`; copy that advertised value
-exactly rather than the final issuer in authorization-server metadata.
-`SN_API_KEY` authenticates the hosted Agent Engine,
-Kafka and Schema Registry; it is not the OAuth MCP access token. All three paths
-use `ork` for the first MCP login, then reuse the live credential for the same URL
-and auth type from `.orca-state/<participant>.json`. Tokens stay in the server-side
-vault, where they can be refreshed; they are never written to `.env` or local state.
-Set `SN_MCP_AUTH=static_bearer` only when your MCP server accepts `SN_API_KEY`.
-Changing the auth mode archives the previous live credential for that same URL
-before creating its replacement (the Registry permits one active credential per
-URL in a vault). If authorization fails, rerun L3/L4 to finish setup; other URLs'
-credentials are preserved. A local Agent Engine with OAuth MCP needs only
-`ORCA_API_KEY` for Registry authentication; `SN_API_KEY` is still needed for Kafka
-and Schema Registry.
-
-### Use a local Agent Engine
-
-Start the CLI's stack with a provider key in your shell:
-
-```bash
-export ANTHROPIC_API_KEY='<your-provider-key>'
-ork local start --with-gateway
-```
-
-Set `ORCA_BASE_URL=http://127.0.0.1:8080` in the tutorial's `.env`, and copy the
-workspace key from the file printed by `ork local start` into `ORCA_API_KEY`.
-The tutorial sends this key as `x-api-key`. A hosted team card continues to use
-`SN_API_KEY` as a Bearer token when `ORCA_API_KEY` is empty.
-
-For L1, run `python doctor.py --agent-only` or `npm run doctor -- --agent-only`.
-This checks the Agent Engine without requiring Kafka, Schema Registry, or MCP.
-The local stack provides the Agent Engine and AI Gateway; L2–L4 still need the
-streaming data services from your team card. For L3/L4, keep `SN_API_KEY` set to
-the MCP service key, separately from the local Registry's `ORCA_API_KEY`.
-
-## L1: Hello, agent (5 min)
-
-| CLI | Python | TypeScript |
+| Lab | You | The idea |
 |---|---|---|
-| `./l1_hello.sh` | `python l1_hello.py` | `npm run l1` |
+| 0. Set up | Get your stack ready and run the doctor | Know that every part answers before you build on it |
+| 1. Hello, agent | Create an agent and chat | Agent, environment, session, events |
+| 2. Hello, streaming SQL | Build a materialized view over the topic | Context that keeps itself fresh |
+| 3. Agent + live context | Give the agent SQL tools, inject new data | The answer changes with the data |
+| 4. Agent acts, human approves | Let the agent write, with your OK | Governed actions |
 
-You'll see something like this (the agent's wording varies):
+Every lab is steps you can check, a short quiz, and a task to try on your own.
+[The labs](labs/README.md) explains how a lab and its checks work.
 
-```
-hello-agent-ana v1: no tools: just a conversation
-[you]    Hi! What is the Data + Agent Hackathon, and what can you see right now?
-[agent]  It's a one-day build where teams combine live streaming data with AI agents. I can't see any live data yet: the next step connects me to a Kafka stream.
-```
+## Learn with a tutor
 
-**What just happened: four API calls.**
+A coding agent such as Claude Code can walk you through either course one step
+at a time, check your work with you, and quiz you. The tutor skill ships in this
+repository: see [Learn with the tutor](docs/tutor.md).
 
-1. **Environment**: where your agent's sessions run.
-2. **Agent**: a model plus a system prompt, defined in
-   [`agent/l1-hello.json`](agent/l1-hello.json). All three paths read that file.
-3. **Session**: one conversation, pinned to a specific agent version.
-4. **Events**: you send a `user.message`; the agent streams back `agent.message`
-   events until the session goes idle.
-
-<details>
-<summary>The code (Python)</summary>
-
-```python
-environment_id = ensure_environment(client, state, f"hello-env-{config.participant}")
-
-layer = load_layer("l1-hello")
-agent = ensure_agent(client, state, agent_params(layer, config))
-
-session = client.sessions.create(
-    environment_id=environment_id,
-    agent={"type": "agent", "id": agent.id, "version": agent.version},
-    title="L1: hello",
-)
-run_turn(client, session.id, question)
-```
-
-`run_turn` ([`python/common.py`](python/common.py)) opens the event stream
-*before* sending the message, so no event is missed, then prints events until
-the agent's turn ends.
-</details>
-
-<details>
-<summary>The code (TypeScript)</summary>
-
-```ts
-const environmentId = await ensureEnvironment(client, state, `hello-env-${config.participant}`);
-
-const layer = loadLayer('l1-hello');
-const agent = await ensureAgent(client, state, agentParams(layer, config));
-
-const session = await client.sessions.create({
-  environment_id: environmentId,
-  agent: { type: 'agent', id: agent.id, version: agent.version },
-  title: 'L1: hello',
-});
-await runTurn(client, session.id, question);
-```
-
-`runTurn` ([`typescript/src/common.ts`](typescript/src/common.ts)) works the same
-way as the Python version.
-</details>
-
-<details>
-<summary>The commands (CLI)</summary>
-
-```bash
-ork agent environments create --name hello-env-ana -o json
-
-ork agent create --name hello-agent-ana --model "$ORCA_MODEL" \
-  --system "$(jq -r .system ../agent/l1-hello.json)" -o json
-
-ork agent sessions create --agent "$AGENT_ID" --agent-version 1 \
-  --environment-id "$ENVIRONMENT_ID" --title "L1: hello" -o json
-
-ork agent sessions events send message --session "$SESSION_ID" --text "Hi! ..."
-ork agent sessions events stream --session "$SESSION_ID" --timeout 15s
-```
-
-[`cli/lib.sh`](cli/lib.sh) wraps these commands, remembers the ids, and prints
-the stream the same way as the other paths.
-</details>
-
-Re-running is safe: the scripts remember your agent in `.orca-state/` and only
-create a new version when its definition changes.
-
-## L2: Hello, streaming SQL (8 min)
-
-In the StreamNative Cloud console, open **SQL Workspace**, select the hackathon
-workspace, and pick your team's database. Use a new query tab for each step.
-The default Kafka topic is `security.login_events`; SQL Workspace exposes its
-Avro source as `"avro.security.login_events"`.
-
-**Align the SQL with your `.env` before running it.** The injectors and doctor use
-`LOGIN_TOPIC`, but the SQL files and examples below contain a fixed source name:
-SQL Workspace does not read your local `.env`. Check `LOGIN_TOPIC`, then replace
-`"avro.security.login_events"` with `"avro.<your LOGIN_TOPIC>"` in both
-[`sql/01_explore.sql`](sql/01_explore.sql) and
-[`sql/02_login_failures.sql`](sql/02_login_failures.sql), and in any query copied
-from this page. For example, `LOGIN_TOPIC=security.team07_logins` requires
-`FROM "avro.security.team07_logins"`. Keep the double quotes around the entire
-source name and confirm that SQL Workspace imported that topic as an Avro source.
-Keep the `login_failures` view name: L3/L4 query that view.
-
-**1. Peek at the stream** ([`sql/01_explore.sql`](sql/01_explore.sql)). Each row
-is one login attempt. The topic name contains dots, so it's double-quoted.
-
-```sql
-SELECT event_time, account_id, ip_address, result, failure_reason
-FROM "avro.security.login_events"
-ORDER BY event_time DESC
-LIMIT 20;
-```
-
-**2. Turn the stream into context** ([`sql/02_login_failures.sql`](sql/02_login_failures.sql)).
-
-```sql
-CREATE MATERIALIZED VIEW login_failures AS
-SELECT
-  account_id,
-  COUNT(*) FILTER (WHERE result = 'FAILURE') AS failed_logins,
-  COUNT(*) FILTER (WHERE result = 'SUCCESS') AS successful_logins,
-  COUNT(DISTINCT ip_address)                AS distinct_ips,
-  MAX(event_time)                           AS last_seen
-FROM "avro.security.login_events"
-GROUP BY account_id;
-```
-
-A materialized view is maintained incrementally: every new login updates the
-counts within seconds. There is no batch job to schedule and nothing to refresh.
-That makes it perfect agent context: always current, and cheap to read.
-
-Check it: `SELECT * FROM login_failures ORDER BY failed_logins DESC LIMIT 10;`
-You should see `acct_0042` near the top: failed logins, then a success. That's
-the attacker.
-
-**3. Make room for the agent's decisions** ([`sql/03_flagged_accounts.sql`](sql/03_flagged_accounts.sql)).
-The agent will write here in L4.
-
-```sql
-CREATE TABLE flagged_accounts (
-  account_id VARCHAR PRIMARY KEY,
-  reason     VARCHAR,
-  flagged_at TIMESTAMPTZ DEFAULT now()
-);
-```
-
-## L3: Agent + live context (9 min)
-
-| CLI | Python | TypeScript |
-|---|---|---|
-| `./l3_live_context.sh` | `python l3_live_context.py` | `npm run l3` |
-
-Your agent is now at version 2, and answers *"Which accounts look like an account
-takeover right now?"* by querying `login_failures` itself. The `[tool]` lines
-show the SQL it runs:
-
-```
-hello-agent-ana v2: + StreamNative MCP (read-only SQL tools)
-[you]    Which accounts look like an account takeover right now?
-[tool]   sql_workspace_list_databases {}
-[tool]   sql_workspace_query {"database": "...", "sql": "SELECT account_id, failed_logins, ..."}
-[agent]  acct_0042: 5 failed logins followed by a success, from 2 IP addresses ...
-```
-
-**Now the real-time moment.** Leave the conversation open. In a **second
-terminal**, inject a fresh attack:
-
-| Python (and CLI path) | TypeScript (and CLI path) |
-|---|---|
-| `cd python && source .venv/bin/activate && python inject.py` | `cd typescript && npm run inject` |
-
-It prints the account it attacked, `acct_9…`. Back in the first terminal, ask the
-same question again. The new account shows up. Nobody refreshed anything: the
-event landed in Kafka, the view updated itself, and the agent read the view.
-
-**What changed** ([`agent/l3-live-context.json`](agent/l3-live-context.json)):
-
-- `mcp_servers`: the StreamNative MCP server for your SQL Workspace.
-- `tools`: an allow-list. Two read-only tools run without asking
-  (`always_allow`); every other tool on that server is disabled.
-- A **vault**: the MCP server's OAuth credential is created through `ork` and
-  stored server-side. Approve the browser login on the first run. The session
-  references the vault by id, so tokens never enter the prompt. Later runs reuse
-  the credential without another browser login.
-
-<details>
-<summary>The code (Python)</summary>
-
-```python
-layer = load_layer("l3-live-context")
-agent = ensure_agent(client, state, agent_params(layer, config))
-
-vault_id = ensure_vault(client, state, f"hello-vault-{config.participant}", config)
-session = client.sessions.create(
-    environment_id=environment_id,
-    agent={"type": "agent", "id": agent.id, "version": agent.version},
-    vault_ids=[vault_id],
-    title="L3: live context",
-)
-chat(client, session.id, QUESTION)
-```
-</details>
-
-<details>
-<summary>The code (TypeScript)</summary>
-
-```ts
-const layer = loadLayer('l3-live-context');
-const agent = await ensureAgent(client, state, agentParams(layer, config));
-
-const vaultId = await ensureVault(client, state, `hello-vault-${config.participant}`, config);
-const session = await client.sessions.create({
-  environment_id: environmentId,
-  agent: { type: 'agent', id: agent.id, version: agent.version },
-  vault_ids: [vaultId],
-  title: 'L3: live context',
-});
-await chat(client, session.id, QUESTION);
-```
-</details>
-
-<details>
-<summary>The commands (CLI)</summary>
-
-```bash
-ork agent update "$AGENT_ID" --version 1 --model "$ORCA_MODEL" \
-  --system "$(jq -r .system ../agent/l3-live-context.json)" \
-  --mcp-server "name=streamnative,type=url,url=$SN_MCP_URL" \
-  --tool-json "$(jq -c '.tools[0]' ../agent/l3-live-context.json)" -o json
-
-ork agent vaults create --display-name hello-vault-ana -o json
-ork agent vaults credentials create --vault "$VAULT_ID" --display-name streamnative-mcp \
-  --mcp-server-url "$SN_MCP_URL" \
-  --oauth-scope "$SN_MCP_OAUTH_SCOPE" -o json
-
-ork agent sessions create --agent "$AGENT_ID" --agent-version 2 \
-  --environment-id "$ENVIRONMENT_ID" --vault-id "$VAULT_ID" --title "L3: live context" -o json
-```
-</details>
-
-## L4: Agent acts, human approves (5 min)
-
-| CLI | Python | TypeScript |
-|---|---|---|
-| `./l4_act.sh` | `python l4_act.py` | `npm run l4` |
-
-The agent (version 3) gets one write tool, and it can only use it with your
-approval. It queries the view, describes the flag table, and reads the database
-time before proposing an insert. The MCP insert tool requires every writable
-column, including nullable columns; it does not apply table defaults. The
-session pauses before the proposed row is written:
-
-```
-[approve?] The agent wants to run sql_workspace_insert_rows with:
-{
-  "database": "<your database>",
-  "schema": "public",
-  "table": "flagged_accounts",
-  "rows": [{
-    "account_id": "acct_9…",
-    "reason": "6 failed logins then a success from one new IP",
-    "flagged_at": "2026-09-30T12:00:00Z"
-  }]
-}
-Allow it? [y/N]
-```
-
-Type `y`, then check in SQL Workspace:
-
-```sql
-SELECT * FROM flagged_accounts;
-```
-
-Ask the agent to flag a different account, and answer `n` this time. The agent is told a human denied the insert,
-and it does not retry.
-
-**What changed** ([`agent/l4-act.json`](agent/l4-act.json)): the read-only
-`sql_workspace_describe_table` checks the required columns, and
-`sql_workspace_insert_rows` uses `permission_policy: always_ask`. When the agent
-calls it, the session emits `agent.mcp_tool_use` and goes idle with
-`stop_reason: requires_action`. Your script answers with a
-`user.tool_confirmation`: `allow`, or `deny` with a reason. On the CLI that is:
-
-```bash
-ork agent sessions events send tool-confirmation --session "$SESSION_ID" \
-  --tool-use-id "$TOOL_USE_EVENT_ID" --decision allow
-```
-
-## What you just built
+## What you build
 
 - **A stream** (Kafka) that holds the facts as they happen.
-- **A materialized view** that keeps a running summary: the agent's always-fresh context.
+- **A materialized view** that keeps a running summary: the agent's always-fresh
+  context.
 - **An agent** that reads that context itself, through an allow-list of tools.
 - **A human approval gate** on the one action that changes something.
 
-That's the shape of most data + agent apps. Swap the topic, the view, and the
-action, and you have your hackathon project. Ideas and next steps:
-[Go further](docs/go-further.md).
-
-## Troubleshooting
-
-| Symptom | Fix |
-|---|---|
-| Doctor: `Agent Engine HTTP 401/403` | The key was rejected. A key created before its permissions must be re-created: ask a facilitator. |
-| Doctor: `Kafka ... authentication` | `SN_SERVICE_ACCOUNT` must be the full principal, `<name>@<org>.auth.streamnative.cloud`; `SN_API_KEY` is the raw key. |
-| The login topic isn't listed in SQL Workspace | Only topics with a registered Avro schema appear. Ask a facilitator. |
-| `relation "avro.security.login_events" does not exist` | Select your team's database and update the quoted Avro source in both L2 SQL files to match `LOGIN_TOPIC` in `.env`. |
-| The agent can't find `login_failures` | Create the view in your team's database (L2, step 2); the agent looks it up there. |
-| `[error]` lines from MCP tools in L3 | Check `SN_MCP_URL` and `SN_MCP_AUTH`, finish the OAuth login, then rerun the doctor. |
-| OAuth issuer mismatch / unsupported client authentication | Use current `ork` main or PR #8 and leave `SN_MCP_OAUTH_ISSUER` empty for StreamNative discovery. An explicit issuer must match an advertised authorization server. `--oauth-allow-issuer-mismatch` is only for trusted servers whose metadata issuer crosses registrable domains; StreamNative does not need it. |
-| `Cannot reach the Agent Engine` | `ORCA_BASE_URL` must be the host root from your card, with no `/v1`. |
-| The agent answers from memory instead of querying | Ask again, "check the view first". The system prompt tells it to always query. |
-
-## Clean up
-
-| CLI | Python | TypeScript |
-|---|---|---|
-| `./cleanup.sh` | `python cleanup.py` | `npm run cleanup` |
-
-This archives your agent and environment, and deletes your vault. An environment
-with session history cannot be deleted; archiving keeps that history available.
-To start L2 over, run [`sql/99_reset.sql`](sql/99_reset.sql).
+That is the shape of most data + agent applications. Swap the topic, the view,
+and the action, and you have your own project: [Go further](docs/go-further.md).
 
 ## What's in this repository
 
 | Path | What |
 |---|---|
-| [`agent/`](agent) | The agent definition for each layer, shared by all three paths |
-| [`sql/`](sql) | The SQL for L2, plus a reset script |
+| [`labs/`](labs) | The two courses: [Cloud](labs/cloud/README.md) and [Local](labs/local/README.md) |
+| [`agent/`](agent) | The agent definition for each lab, per stack, shared by all three paths |
+| [`sql/`](sql) | The SQL for Lab 2, per stack, plus a reset script |
 | [`cli/`](cli) | The CLI path (`ork` + `jq`) |
-| [`python/`](python) | The Python path, the doctor, and the data injector |
-| [`typescript/`](typescript) | The TypeScript path, the doctor, and the data injector |
-| [`schemas/`](schemas) | The Avro schema of the login topic |
-| [`docs/`](docs) | [Before you arrive](docs/before-you-arrive.md) · [Go further](docs/go-further.md) |
+| [`python/`](python) | The Python path, the doctor, the seeder, and the data injector |
+| [`typescript/`](typescript) | The TypeScript path, the doctor, the seeder, and the data injector |
+| [`local/`](local) | The Local course's stack: a Compose file and four helper scripts |
+| [`lab-ork`](lab-ork) | `ork` with your endpoint, key, and ids filled in: what the lab checks use |
+| [`data/`](data), [`schemas/`](schemas) | The synthetic login events the Local course loads, and their Avro schema |
+| [`skills/`](skills) | The tutor skill |
+| [`docs/`](docs) | [Before you arrive](docs/before-you-arrive.md) · [Learn with the tutor](docs/tutor.md) · [Go further](docs/go-further.md) |
 
 Licensed under [Apache 2.0](LICENSE).

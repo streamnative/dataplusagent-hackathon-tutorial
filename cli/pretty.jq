@@ -20,6 +20,9 @@ def pyjson:
 
 def clean: tostring | gsub("[\n\r\u001f]"; " ");
 
+# Servers report a retry in one of two places: beside the error, or inside it.
+def will_retry: (.retry_status.will_retry == true) or (.error.retry_status.type == "retrying");
+
 (if wrapped then (.id // "" | tostring) else "" end) as $frame
 | (if wrapped then .data else . end) as $e
 | ($e.processed_at // "") as $at
@@ -43,6 +46,6 @@ def clean: tostring | gsub("[\n\r\u001f]"; " ");
     ((if $e.is_error then "[error] " else "[result] " end)
       + ([($e.content // [])[] | select(type == "object") | .text // ""] | join(" "))) | shorten
   elif $e.type == "session.error" then
-    "[error]  " + $error + (if $e.retry_status.will_retry then " (retrying)" else "" end)
+    "[error]  " + $error + (if ($e | will_retry) then " (retrying)" else "" end)
   else "" end
 )

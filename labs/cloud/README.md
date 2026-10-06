@@ -25,6 +25,7 @@ flowchart LR
 | Lab | Time | Where | You | The idea |
 |---|---|---|---|---|
 | [0. Set up](00-set-up.md) | 10 min | terminal | Fill in `.env` from your instance, load the topic, run the doctor | Check service access before you build on it |
+| or [0. Set up from a team card](00-set-up-team-card.md) | 5 min | terminal | Fill in `.env` from your team card, load the topic, run the doctor | The same, when the organizers created your environment |
 | [1. Hello, agent](01-hello-agent.md) | 5 min | CLI / Python / TS | Create an agent and chat | Agent, environment, session, events |
 | [2. Hello, streaming SQL](02-streaming-sql.md) | 8 min | SQL Workspace | Build a materialized view over the topic | Context that keeps itself fresh |
 | [3. Agent + live context](03-live-context.md) | 9 min | CLI / Python / TS | Give the agent SQL tools, inject new data | The answer changes with the data |
@@ -43,8 +44,13 @@ your own.
 - One path installed, plus `ork`, `jq`, and `snctl`. All of this is in
   [Before you arrive](../../docs/before-you-arrive.md).
 
-Start with [Lab 0: Set up](00-set-up.md). If something goes wrong, see
-[Troubleshooting](troubleshooting.md). How labs and checks work is in
+**Have a team card?** Then the organizers created all of this for your team,
+and the card has its addresses and an API key. You need only your login, one
+path, `ork`, and `jq`, and you start with
+[Lab 0: Set up from a team card](00-set-up-team-card.md).
+
+Otherwise, start with [Lab 0: Set up](00-set-up.md). If something goes wrong,
+see [Troubleshooting](troubleshooting.md). How labs and checks work is in
 [The labs](../README.md), and a coding agent can
 [tutor you through the course](../../docs/tutor.md).
 
@@ -60,6 +66,15 @@ cluster was Serverless; the SQL workspace ran RisingWave 3.1.0-alpha.
 - **Lab 0**: every `snctl` lookup, the topic, the seeder, and the doctor, on the
   Python path. On the TypeScript path, the doctor, and the seeder against the
   topic once it was loaded.
+- **Lab 0 from a team card**: added on 6 October 2026 and run that day against
+  the same test instance, from a card of ready-made `NAME=value` lines. On the
+  Python path: every step and check, and the failing doctor run its solution
+  shows. On the TypeScript path, and with the CLI column's commands: the doctor
+  and the seeder. The topic was loaded already (274 events, after earlier Lab 3
+  runs), so the seeder printed its "already holds" line each time. The card had
+  no `SN_SQL_DATABASE` line; nothing in Lab 0 reads that value. Not run from
+  this page: the seeder on an empty topic, a card of labeled values, and an
+  environment the organizers created.
 - **Lab 2**: every statement and check, through `psql`. The console was not
   used.
 - **Labs 1, 3 and 4**: every step and check, on all three paths, with the model

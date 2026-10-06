@@ -18,7 +18,8 @@
 #   ## What's next
 #
 # Relative links are checked in README.md, labs/, docs/ and skills/. The lab
-# pages the tutor skill names have to exist in both courses.
+# pages the tutor skill names have to exist in both courses; a page it names
+# with its course folder (labs/cloud/<page>), in that course.
 # Prints one line per problem and exits 1 if there is any.
 set -euo pipefail
 
@@ -135,6 +136,11 @@ if [ -f "$skill" ]; then
         printf '%s names %s, but labs/%s/%s does not exist\n' "$skill" "$page" "$course" "$page" >>"$problems"
     done
   done < <(grep -o '`[0-9a-z-]*\.md`' "$skill" | tr -d '`' | sort -u)
+  # A page it names with its course folder is in that course only.
+  # shellcheck disable=SC2016  # the backticks are Markdown, not a command
+  while IFS= read -r page; do
+    [ -f "$page" ] || printf '%s names %s, but it does not exist\n' "$skill" "$page" >>"$problems"
+  done < <(grep -o '`labs/[a-z]*/[0-9a-z-]*\.md`' "$skill" | tr -d '`' | sort -u)
 fi
 
 if [ -s "$problems" ]; then

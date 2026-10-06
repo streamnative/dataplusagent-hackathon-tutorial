@@ -30,8 +30,8 @@ Everyone also needs:
 - [`jq`](https://jqlang.org/download/), for the checks in every lab.
 - [`snctl`](https://docs.streamnative.io/tools/cli/snctl/snctl-overview) (the
   StreamNative Cloud CLI): `brew install streamnative/streamnative/snctl`. Lab 0
-  uses it to read your instance's addresses and to create your topic. With a
-  team card (step 4) you do not need it.
+  uses it to read your instance's addresses and to create your topic. In an
+  environment the organizers created for your team (step 4) you do not need it.
 
 ## 1. Get the code
 
@@ -74,12 +74,12 @@ Every line should say `PASS`.
 
 ## 4. Set up your instance
 
-**Getting a team card?** If the organizers told you that your team's
-environment is created for you, skip this step and create nothing in the
-console: your Kafka cluster, SQL workspace, and agent workspace already exist.
-Your team card has their addresses and an API key, and
-[Lab 0: Set up from a team card](../labs/cloud/00-set-up-team-card.md) starts
-from it.
+**Did the organizers create your team's environment?** Then skip this step and
+create nothing in the console: your Kafka cluster, SQL workspace, and agent
+workspace already exist. The organizers share an environment sheet with a row
+for your team, and
+[Lab 0: Set up from a team card](../labs/cloud/00-set-up-team-card.md) turns
+that row into your `.env`.
 
 The organizers add you to the hackathon organization on StreamNative Cloud, give
 you an **instance** of your own, and make a **service account** in it. They give

@@ -5,7 +5,7 @@ Two courses teach the same five labs on two stacks. Pick one.
 | | [Cloud course](cloud/README.md) | [Local course](local/README.md) |
 |---|---|---|
 | Runs on | StreamNative Cloud: your own instance, with a Kafka cluster, a SQL workspace, and an agent workspace | Your laptop: Ursa for Kafka, RisingWave, and the Orca Agent Engine |
-| You need | A StreamNative Cloud login from the hackathon organizers, with a team card or an instance of your own | Docker and an Anthropic API key |
+| You need | A StreamNative Cloud login from the hackathon organizers, with a team environment they created or an instance of your own | Docker and an Anthropic API key |
 | Time | About 40 minutes | About 45 minutes, plus the image downloads |
 | Take it when | You are at the event | You have no StreamNative Cloud instance, or you want to see every part run |
 

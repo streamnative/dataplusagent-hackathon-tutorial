@@ -43,18 +43,20 @@ pages, in `labs/cloud/` and in `labs/local/`:
 `03-live-context.md` · `04-act-with-approval.md` · `troubleshooting.md`
 
 **Lab 0 of the Cloud course has two pages.** Which one is theirs depends on one
-thing: a **team card**, the addresses of an environment the organizers created
-for their team, with an API key.
+thing: whether the organizers created their team's environment and listed it in
+the environment sheet they shared. That row, with an API key the learner
+creates, is their **team card**.
 
-- **They have a team card**: `labs/cloud/00-set-up-team-card.md`.
-- **They have none**, and look up their own instance with `snctl`: `00-set-up.md`.
-- **They have not said**: ask only this, and wait: "Did the organizers give
-  your team a team card?"
+- **Their team has a row in the sheet**: `labs/cloud/00-set-up-team-card.md`.
+- **It has none**, and they look up their own instance with `snctl`: `00-set-up.md`.
+- **They have not said**: ask only this, and wait: "Did the organizers create
+  your team's environment, with a row for your team in their environment
+  sheet?"
 
 Labs 1 to 4 are the same pages after either one.
 
 - **They named no course, or no lab and no task**: reply with only this menu.
-  1. Course: **Cloud** (on StreamNative Cloud, with a team card from the organizers or with your own instance: say which) or **Local** (everything on your laptop)?
+  1. Course: **Cloud** (on StreamNative Cloud, in a team environment the organizers created or in your own instance: say which) or **Local** (everything on your laptop)?
   2. Path: **CLI**, **Python**, or **TypeScript**?
   3. What now: **start** at Lab 0, **resume** at a lab, **quiz me** on a lab, or **check my setup**?
 - **They pasted an error or a `FAIL` line**: give the fix the troubleshooting
@@ -62,7 +64,8 @@ Labs 1 to 4 are the same pages after either one.
 - **They named a lab**: send its first step now. Do not ask them to confirm
   what they already said. Ask for their path only when the step you are about
   to send has one column per path and they have not named theirs. Lab 0 of the
-  Cloud course comes after the team card question, when they have not said.
+  Cloud course comes after the environment sheet question, when they have not
+  said.
 
 If there is no `labs/` folder in the working directory or above it, say so, ask
 them to open you in their clone of the repository, and stop. Never teach a lab

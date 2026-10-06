@@ -26,7 +26,7 @@ The same five labs, on two stacks.
 | | [Cloud course](labs/cloud/README.md) | [Local course](labs/local/README.md) |
 |---|---|---|
 | Runs on | StreamNative Cloud: your own instance, with a Kafka cluster, a SQL workspace, and an agent workspace | Your laptop: [Ursa for Kafka](https://openlakestream.org/docs/ursa-for-kafka), [RisingWave](https://risingwave.com), and the Orca Agent Engine (`ork local`) |
-| You need | A StreamNative Cloud login from the hackathon organizers, with a team card or an instance of your own | Docker and an Anthropic API key |
+| You need | A StreamNative Cloud login from the hackathon organizers, with a team environment they created or an instance of your own | Docker and an Anthropic API key |
 | Time | About 40 minutes | About 45 minutes, plus image downloads |
 | Start | [Lab 0: Set up](labs/cloud/00-set-up.md), or [from a team card](labs/cloud/00-set-up-team-card.md) | [Lab 0: Set up](labs/local/00-set-up.md) |
 

@@ -1,23 +1,28 @@
 # Lab 0: Set up from a team card
 
-**Cloud course** · 5 minutes, plus 5 on your own · CLI, Python, or TypeScript
+**Cloud course** · 8 minutes, plus 5 on your own · CLI, Python, or TypeScript
 
-You put your team card in `.env`, load the login stream into your team's Kafka
-cluster, and run the doctor. When this lab is done, the Agent Engine, Kafka,
-and Schema Registry on your card all answer, and your topic holds 246 logins.
+The organizers created an environment for your team on StreamNative Cloud. You
+build your **team card** from it, put it in `.env`, load the login stream into
+your team's Kafka cluster, and run the doctor. When this lab is done, the Agent
+Engine, Kafka, and Schema Registry on your card all answer, and your topic
+holds 246 logins.
 
-No team card? [Lab 0: Set up](00-set-up.md) starts from an instance of your own
-instead. Both end in the same place, and Lab 1 is the same after either.
+Your team is not in the organizers' environment sheet?
+[Lab 0: Set up](00-set-up.md) starts from an instance of your own instead. Both
+end in the same place, and Lab 1 is the same after either.
 
 ## Before you start
 
-- You have your **team card** from the organizers: an **API key**, and the
-  addresses of the environment they created for your team on StreamNative
-  Cloud. That environment is a Kafka cluster, a SQL workspace that imports it,
-  an agent workspace, and the service account the key belongs to. Everything on
-  the card already exists: you create nothing, and you do not need `snctl`.
-- You can log in to StreamNative Cloud, and the organizers added your login to
-  your team's environment. This lab does not use that login; Labs 2 and 3 do.
+- The organizers created your team's environment and shared the **environment
+  sheet** with you. On its **Team Environments** tab, one row is your team's:
+  the names and addresses of a Kafka cluster, a SQL workspace that imports it,
+  an agent workspace, and a service account. All of it already exists. In this
+  lab you create one thing, an API key, and you do not need `snctl`.
+- You know your team's number: it is the **Team ID** of your row.
+- You can log in to the StreamNative Cloud console, in the organization your
+  row names. You create your API key there in step 2, and Labs 2 and 3 use the
+  same login.
 - You cloned this repository and opened a terminal in it. The terminal runs
   `bash`: on Windows that is WSL or Git Bash, on every path, because the checks
   are `bash` commands.
@@ -67,7 +72,10 @@ PASS  jq                               found
 All good: you're ready.
 ```
 
-## Step 2: Fill in `.env` from your team card
+## Step 2: Build your team card in `.env`
+
+Your team card is your team's row in the environment sheet, plus an API key
+that you create. `.env` is where you write it down.
 
 Open a second terminal at the repository root and copy the template:
 
@@ -75,30 +83,62 @@ Open a second terminal at the repository root and copy the template:
 cp .env.cloud.example .env
 ```
 
-`.env` is git-ignored. It will hold your team's key: do not commit it or paste
-it anywhere. Give each of these lines its value from the card:
+`.env` is git-ignored. It will hold your key: do not commit it or paste it
+anywhere.
 
-| `.env` line | On your card | Write it as |
+**From the sheet.** Open the environment sheet on the **Team Environments** tab
+and find the row with your **Team ID**. Six lines of `.env` come from that row:
+
+| `.env` line | Column in your row | Write it as |
 |---|---|---|
-| `SN_API_KEY` | API key | the raw key, with no `token:` in front |
-| `SN_SERVICE_ACCOUNT` | Service account | `<name>@<org>.auth.streamnative.cloud`. If the card has only the name, add the rest, with the organization id from the card (`o-...`) |
-| `ORCA_BASE_URL` | Agent workspace endpoint | `https://` and the host, with no `/v1` |
-| `KAFKA_BOOTSTRAP_SERVERS` | Broker URL | the host and its port, `:9093` |
-| `SCHEMA_REGISTRY_URL` | Schema registry URL | `https://` and the host |
-| `SN_MCP_URL` | SQL workspace MCP endpoint | `https://mcp.streamnative.cloud/mcp/x/<org>/sqlworkspace.compute.streamnative.io/<SQL workspace>` |
-| `SN_SQL_DATABASE` | SQL database | as given. It is the name of your SQL catalog, not of your SQL workspace |
+| `SN_SERVICE_ACCOUNT` | **Service Account**, with **StreamNative Cloud Organization** | `<Service Account>@<Organization>.auth.streamnative.cloud`. A cell that already ends in `.auth.streamnative.cloud` goes in as it is |
+| `ORCA_BASE_URL` | **Agent Workspace Endpoint** | `https://` and the host, with no `/v1` |
+| `KAFKA_BOOTSTRAP_SERVERS` | **Broker URL** | as it is: the host and its port, `:9093` |
+| `SCHEMA_REGISTRY_URL` | **Schema Registry URL** | as it is, with `https://` |
+| `SN_MCP_URL` | **SQL Workspace MCP Endpoint** | as it is |
+| `SN_SQL_DATABASE` | **SQL Database** | as it is. It is the database you open in Lab 2, and it is not your SQL workspace's name |
 
-If your card already is a list of `NAME=value` lines, paste each one over the
-empty line with the same name.
+A cell you need is empty? Ask a facilitator. One value you can build yourself:
+the MCP endpoint is
+`https://mcp.streamnative.cloud/mcp/x/<Organization>/sqlworkspace.compute.streamnative.io/<SQL Workspace Name>`,
+from two other cells of your row.
 
-`SN_SQL_DATABASE` is the database you use in Lab 2 and the agent targets in
-Labs 3 and 4. Leave the other lines as they are: the MCP server uses a separate
-browser login in Lab 3, so `SN_MCP_AUTH=oauth` stays, and `SN_MCP_OAUTH_ISSUER`
-stays empty.
+**Your API key.** The sheet holds no keys. You create one in the StreamNative
+Cloud console, for the service account in your row:
 
-**Two people share one team card.** Your teammate fills in the same values, and
-you both work in the same Kafka cluster and the same SQL database. Your agents
-stay apart: each is named after its owner's OS user name, like
+1. Log in to the console, in the organization your row names.
+2. Open the organization's **Settings**. Under **Access & Control**, click
+   **Service Accounts**, then click your team's service account.
+3. Click **Create API key**. Give the key a **Name** that nobody else in the
+   organization uses, in lowercase letters, digits, and dashes: your team and
+   your name work, such as `team07-ana`. Leave **Expiration** at 30 days, and
+   click **Create**.
+4. The next window shows the key, once. Click **Copy**, paste the key into
+   `.env` as `SN_API_KEY` with nothing in front of it, then click **Close**. If
+   you lose the key, create another.
+
+If **Create API key** is greyed out, your login may not create keys: ask a
+facilitator.
+
+Leave the other lines as they are: the MCP server uses a separate browser login
+in Lab 3, so `SN_MCP_AUTH=oauth` stays, and `SN_MCP_OAUTH_ISSUER` stays empty.
+
+Your finished card has these seven lines filled in:
+
+```text
+SN_API_KEY=<the key you copied>
+SN_SERVICE_ACCOUNT=<service account>@<organization>.auth.streamnative.cloud
+ORCA_BASE_URL=https://<agent workspace host>
+KAFKA_BOOTSTRAP_SERVERS=<broker host>:9093
+SCHEMA_REGISTRY_URL=https://<schema registry host>
+SN_MCP_URL=https://mcp.streamnative.cloud/mcp/x/<organization>/sqlworkspace.compute.streamnative.io/<SQL workspace>
+SN_SQL_DATABASE=<SQL database>
+```
+
+**Two people share one environment.** Your teammate fills in the same six lines
+from the same row, and can create a key of their own for the same service
+account. You both work in the same Kafka cluster and the same SQL database.
+Your agents stay apart: each is named after its owner's OS user name, like
 `hello-agent-ana`. If the two of you have the same user name, each set
 `PARTICIPANT` in `.env` to a name of your own. In Lab 2 the view and the table
 are created once for the team: if your teammate got there first, the `CREATE`
@@ -190,7 +230,7 @@ Still failing after two tries? Raise your hand, or see
 
 - A. Fix it now: the doctor has to print only `PASS`.
 - B. Nothing yet: Lab 3 does the browser login this check waits for.
-- C. Ask for a new team card.
+- C. Create a new API key.
 
 <details>
 <summary>Answer</summary>
@@ -263,8 +303,9 @@ Engine check, tells you the exact value to use, and ends with
 
 ## Recap
 
-- `.env` holds your team card: the addresses of your team's environment and its
-  key. It is git-ignored.
+- `.env` holds your team card: six values from your team's row in the
+  environment sheet, and an API key you created for your team's service
+  account. It is git-ignored.
 - Your team shares that environment. The login stream is loaded once, and the
   seeder refuses a second copy.
 - The doctor checks each service on the card and prints the fix for a failure.

@@ -69,10 +69,12 @@ start_engine() {
   # Replace what is not running. A container whose port could not be bound
   # (another program had it) stays cut off from its network: Docker starts it
   # with loopback only from then on, even once the port is free (seen with
-  # Docker Engine 29.2). The engine's data is in volumes, so nothing is lost.
+  # Docker Engine 29.2). The engine's data is in named volumes, so nothing is
+  # lost: `--volumes` takes only the unnamed ones an image declares, which would
+  # otherwise be left behind at every start.
   local name
   while IFS= read -r name; do
-    [ -z "$name" ] || docker rm "$name" >/dev/null
+    [ -z "$name" ] || docker rm --volumes "$name" >/dev/null
   done < <(engine_stopped_containers)
   ork local --data-dir "$ORK_DIR" start --with-gateway
 }

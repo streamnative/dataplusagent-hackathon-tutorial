@@ -53,7 +53,13 @@ case "$1" in
     ;;
   exec) cat "$FAKE_DOCKER_DIR/provider-status" 2>/dev/null ;;   # the harness asks the provider
   run) ;;   # curl on the engine's network: the MCP server answers
-  compose) ;;
+  compose)
+    # `rm` can be made to fail, noisily: stopping must not depend on it.
+    if [[ " $* " == *" rm "* && -f "$FAKE_DOCKER_DIR/compose-rm-fails" ]]; then
+      echo "No stopped containers" >&2
+      exit 1
+    fi
+    ;;
   *) exit 1 ;;
 esac
 EOF
@@ -226,6 +232,7 @@ test_engine_replaces_its_containers_that_are_not_running() {
   start_engine
   check "removes a container that never started, before the engine starts" removed_before_the_start ork-registry-1
   check "removes a container that has stopped, before the engine starts" removed_before_the_start ork-migrate-1
+  check "takes each one's unnamed volumes with it" grep -qx -- "rm --volumes ork-migrate-1" "$FAKE_DOCKER_DIR/calls"
   check "leaves a running container alone" not removed ork-harness-1
   check "leaves other projects' containers alone" not removed someone-elses-container
   check "then starts the engine" started
@@ -238,6 +245,48 @@ test_engine_starts_when_nothing_has_stopped() {
   start_engine
   check "asks docker to remove nothing" not grep -q '^rm' "$FAKE_DOCKER_DIR/calls"
   check "and starts the engine" started
+}
+
+# ------------------------------------------------------------------ stopping --
+
+asked() { grep -qE -- "$1" "$FAKE_DOCKER_DIR/calls"; }   # asked <regex>: docker was asked this
+
+test_stopping_keeps_your_data_and_leaves_no_unnamed_volumes() {
+  # `down` alone keeps the unnamed volumes some images declare. Every stop and
+  # start left four more behind.
+  fresh_repo down
+  engine_started
+  run down.sh
+  check "stopping succeeds" [ "$STATUS" -eq 0 ]
+  check "the engine's containers go with their unnamed volumes" \
+    asked '^compose .*--project-name ork-local-[0-9a-f]{8} rm --stop --force --volumes$'
+  check "so do the streaming stack's" \
+    asked '^compose .*--project-name hello-data-agent .*rm --stop --force --volumes$'
+  check "both stacks are brought down" [ "$(grep -cE '^compose .* down --remove-orphans$' "$FAKE_DOCKER_DIR/calls")" -eq 2 ]
+  check "no named volume is deleted" not asked ' down -v'
+  check "says your data is kept" out_has "Your data is kept"
+}
+
+test_stopping_does_not_depend_on_removing_unnamed_volumes() {
+  fresh_repo down-rm-fails
+  engine_started
+  touch "$FAKE_DOCKER_DIR/compose-rm-fails"
+  run down.sh
+  check "stopping succeeds when that step fails" [ "$STATUS" -eq 0 ]
+  check "both stacks are still brought down" [ "$(grep -cE '^compose .* down --remove-orphans$' "$FAKE_DOCKER_DIR/calls")" -eq 2 ]
+  check "and that step's messages are not shown" [ ! -s "$R/err" ]
+}
+
+test_reset_deletes_the_volumes_with_the_stacks() {
+  fresh_repo down-reset
+  engine_started
+  printf 'TUTORIAL_STACK=local\n' >"$R/.env"
+  run down.sh --reset
+  check "reset succeeds" [ "$STATUS" -eq 0 ]
+  check "the engine's volumes are deleted" asked '^compose .*--project-name ork-local-[0-9a-f]{8} down -v --remove-orphans$'
+  check "the streaming stack's too" asked '^compose .*--project-name hello-data-agent .*down -v --remove-orphans$'
+  check "the engine's keys go with its volumes" [ ! -e "$R/.lab/ork" ]
+  check "and the local .env" [ ! -e "$R/.env" ]
 }
 
 # ------------------------------------------------------ checking the engine --

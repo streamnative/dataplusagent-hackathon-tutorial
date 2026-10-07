@@ -18,6 +18,11 @@ part of the stack answers and the topic holds 246 logins.
   |---|---|
   | `cd python && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt` | `cd typescript && npm install` |
 
+  For Python, `python3 --version` has to say 3.11 or newer. On macOS, Apple's
+  own `python3` is 3.9, and with it `pip` stops at
+  `No matching distribution found for runorca`. Install a newer Python and name
+  it in the command, for example `python3.13 -m venv .venv`.
+
   The CLI path needs only `ork` and `jq` for the labs, plus one of the two
   above for the doctor, the seeder, and the injector.
 - Keep two terminals open: one in your path's folder (`cli/`, `python/` or

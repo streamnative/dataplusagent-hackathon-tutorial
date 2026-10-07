@@ -45,6 +45,11 @@ source .venv/bin/activate        # Git Bash on Windows: source .venv/Scripts/act
 pip install -r requirements.txt
 ```
 
+`python3 --version` has to say 3.11 or newer. On macOS, Apple's own `python3`
+is 3.9, and with it `pip` stops at
+`No matching distribution found for runorca`. Install a newer Python and name it
+in the second line, for example `python3.13 -m venv .venv`.
+
 **TypeScript**
 
 ```bash

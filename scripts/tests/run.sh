@@ -267,6 +267,21 @@ test_the_tutor_skill_names_only_lab_pages_that_exist() {
   check "it passes once both courses have every page the tutor names" [ "$STATUS" -eq 0 ]
 }
 
+test_the_tutor_skill_can_name_a_page_only_one_course_has() {
+  fresh_root tutor-one-course
+  two_labs
+  mkdir -p "$R/labs/local" "$R/skills/data-agent-tutor"
+  cp "$R"/labs/cloud/*.md "$R/labs/local/"
+  # shellcheck disable=SC2016  # the backticks are Markdown, not a command
+  printf 'Both courses: `00-set-up.md`. Cloud only: `labs/cloud/00-set-up-team-card.md`.\n' >"$R/skills/data-agent-tutor/SKILL.md"
+  lint
+  check "a page the tutor names with its course folder fails while it is missing" [ "$STATUS" -eq 1 ]
+  check "naming the skill and the page" says "skills/data-agent-tutor/SKILL.md names labs/cloud/00-set-up-team-card.md"
+  lab 00-set-up-team-card.md 's/^# Lab 1: Hello, agent/# Lab 0: Set up from a team card/'
+  lint
+  check "it passes once that course has the page; the other course does not need one" [ "$STATUS" -eq 0 ]
+}
+
 for t in $(declare -F | awk '{print $3}' | grep '^test_'); do "$t"; done
 
 printf '\n%d passed, %d failed\n' "$PASSED" "$FAILED"

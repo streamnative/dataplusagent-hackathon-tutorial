@@ -49,7 +49,7 @@ last row works in any agent that can read a file.
 Started with no request, the tutor asks three things:
 
 ```text
-1. Course: Cloud (your own instance on StreamNative Cloud) or Local (everything on your laptop)?
+1. Course: Cloud (on StreamNative Cloud, in a team environment the organizers created or in your own instance: say which) or Local (everything on your laptop)?
 2. Path: CLI, Python, or TypeScript?
 3. What now: start at Lab 0, resume at a lab, quiz me on a lab, or check my setup?
 ```
@@ -59,6 +59,7 @@ Started with no request, the tutor asks three things:
 | You want to | Say |
 |---|---|
 | Take a course from the start | `Start the Cloud course on the Python path.` |
+| Start in a team environment | `Start the Cloud course on the Python path. My team has a row in the organizers' environment sheet.` |
 | Pick up where you stopped | `Resume the Local course at Lab 3. I'm on TypeScript.` |
 | Be quizzed | `Quiz me on Lab 2.` |
 | Find out why something fails | `Check my setup.` Or paste the error. |

@@ -14,7 +14,8 @@ WORK=$(cd "$WORK" && pwd)   # as the scripts see it: a TMPDIR ending in "/" leav
 trap 'rm -rf "$WORK"' EXIT
 
 # A `docker` that knows which host port the registry is published on, which
-# containers exist, and remembers what it was asked.
+# containers exist, what the gateway holds and what the model provider answers,
+# and remembers what it was asked.
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/docker" <<'EOF'
 #!/usr/bin/env bash
@@ -43,6 +44,15 @@ case "$1" in
     [ -f "$FAKE_DOCKER_DIR/registry-port" ] && echo "127.0.0.1:$(cat "$FAKE_DOCKER_DIR/registry-port")"
     ;;
   rm) [ $# -ge 2 ] || exit 1 ;;   # like docker, it wants at least one container
+  inspect)
+    # The gateway's environment, or the network it is on, whichever is asked for.
+    case "$*" in
+      *.Config.Env*) cat "$FAKE_DOCKER_DIR/gateway-env" ;;
+      *) echo ork-local_default ;;
+    esac
+    ;;
+  exec) cat "$FAKE_DOCKER_DIR/provider-status" 2>/dev/null ;;   # the harness asks the provider
+  run) ;;   # curl on the engine's network: the MCP server answers
   compose) ;;
   *) exit 1 ;;
 esac
@@ -228,6 +238,86 @@ test_engine_starts_when_nothing_has_stopped() {
   start_engine
   check "asks docker to remove nothing" not grep -q '^rm' "$FAKE_DOCKER_DIR/calls"
   check "and starts the engine" started
+}
+
+# ------------------------------------------------------ checking the engine --
+
+PROVIDER_KEY=sk-ant-test-key-0123456789
+
+engine_running() {  # an engine that is up and linked, and holds a provider key
+  engine_started
+  printf 'PATH=/usr/bin\nANTHROPIC_API_KEY=%s\n' "$PROVIDER_KEY" >"$FAKE_DOCKER_DIR/gateway-env"
+  printf "        allowed_private_hosts: ['risingwave-mcp']\n" >"$R/.lab/ork/gateway.yaml"
+}
+
+provider_answers() {  # what the harness hears back when it asks about the key
+  printf '%s\n' "$1" >"$FAKE_DOCKER_DIR/provider-status"
+}
+
+test_check_passes_when_the_provider_accepts_the_key() {
+  fresh_repo provider-accepts
+  engine_running
+  provider_answers 200
+  run engine.sh --check
+  check "the check succeeds" [ "$STATUS" -eq 0 ]
+  check "says the provider accepts the key" out_has "PASS  the model provider accepts that key"
+  check "and that the engine is up" out_has "The Agent Engine is up"
+  check "the key is on no command line" not grep -qF "$PROVIDER_KEY" "$FAKE_DOCKER_DIR/calls"
+  check "and in nothing the script prints" not grep -qF "$PROVIDER_KEY" "$R/out" "$R/err"
+}
+
+test_check_fails_when_the_provider_refuses_the_key() {
+  # Before this check, a refused key first showed in Lab 1, as three minutes of retries.
+  fresh_repo provider-refuses
+  engine_running
+  provider_answers 401
+  run engine.sh --check
+  check "exits 1 on a refused key" [ "$STATUS" -eq 1 ]
+  check "names the check that failed" out_has "FAIL  the model provider accepts that key"
+  check "says what the provider answered" out_has "the provider answered 401"
+  check "says how to give the engine another key" out_has "export ANTHROPIC_API_KEY=<a key it accepts>, then local/engine.sh"
+  check "still runs the checks that follow" out_has "PASS  the gateway allows the MCP host risingwave-mcp"
+}
+
+test_check_tells_a_network_problem_from_a_refused_key() {
+  fresh_repo provider-unreachable
+  engine_running
+  provider_answers unreachable
+  run engine.sh --check
+  check "exits 1 when the provider cannot be reached" [ "$STATUS" -eq 1 ]
+  check "blames the network" out_has "the engine cannot reach https://api.anthropic.com"
+  check "does not say to change the key" not out_has "export ANTHROPIC_API_KEY"
+}
+
+test_check_does_not_blame_the_key_for_a_provider_outage() {
+  fresh_repo provider-outage
+  engine_running
+  provider_answers 529
+  run engine.sh --check
+  check "exits 1 while the provider is failing" [ "$STATUS" -eq 1 ]
+  check "says the answer is not about the key" out_has "the provider answered 529, which is not about your key"
+  check "does not say to change the key" not out_has "export ANTHROPIC_API_KEY"
+}
+
+test_check_says_so_when_the_harness_cannot_ask() {
+  fresh_repo provider-not-asked
+  engine_running   # and no answer: `docker exec` fails, as on a harness that is down
+  run engine.sh --check
+  check "exits 1 when nothing could ask" [ "$STATUS" -eq 1 ]
+  check "names the check that failed" out_has "FAIL  the model provider accepts that key"
+  check "says that nothing could ask" out_has "the harness could not ask the provider"
+  check "and to start the engine again" out_has "Start the engine again: local/engine.sh"
+}
+
+test_check_asks_the_provider_nothing_without_a_key() {
+  fresh_repo provider-no-key
+  engine_running
+  printf 'PATH=/usr/bin\nANTHROPIC_API_KEY=\n' >"$FAKE_DOCKER_DIR/gateway-env"
+  provider_answers 401
+  run engine.sh --check
+  check "fails on the missing key" out_has "FAIL  the gateway has a provider key"
+  check "prints one failure for it, not two" not out_has "the model provider accepts that key"
+  check "and makes no request" not grep -q '^exec ' "$FAKE_DOCKER_DIR/calls"
 }
 
 # ------------------------------------------------------- the gateway patch --

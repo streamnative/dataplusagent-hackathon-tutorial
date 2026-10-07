@@ -35,8 +35,8 @@ As for what I can see right now — nothing live just yet! The next step connect
 ```
 
 This is the first time your stack calls the model. If you see
-`[error]  ... (retrying)` lines and no reply, the model provider rejected the key
-the engine started with: press Ctrl-C and see
+`[error]  ... (retrying)` lines and no reply, the model provider is refusing the
+request: press Ctrl-C and see
 [Troubleshooting](troubleshooting.md#the-model-does-not-answer).
 
 ### Check

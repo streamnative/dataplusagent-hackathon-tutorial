@@ -11,6 +11,8 @@ MCP_HOST=risingwave-mcp
 # The object store's image ships a curl. Both stacks already use the image.
 # shellcheck disable=SC2034  # read by engine.sh
 CURL_IMAGE=rustfs/rustfs:1.0.0
+# Where the gateway that `ork local` configures sends your agent's model calls.
+PROVIDER_URL=https://api.anthropic.com
 
 die() {
   printf '\n%s\n' "$1" >&2
@@ -81,4 +83,22 @@ This script was written for ork v0.6.0; your ork may write a different gateway c
   # Keep the file itself, and its mode: the gateway container reads it.
   cat "$file.tmp" >"$file"
   rm -f "$file.tmp"
+}
+
+# What the model provider's answer about the engine's key calls for: nothing
+# when it accepts the key, otherwise the fix.
+provider_fix() {  # provider_fix <HTTP status, "unreachable", or nothing>
+  case "$1" in
+    200) ;;
+    401 | 403)
+      printf 'the provider answered %s. export ANTHROPIC_API_KEY=<a key it accepts>, then local/engine.sh' "$1"
+      ;;
+    unreachable)
+      printf 'the engine cannot reach %s. Check your network, then local/engine.sh --check' "$PROVIDER_URL"
+      ;;
+    [0-9][0-9][0-9])
+      printf 'the provider answered %s, which is not about your key. Try again: local/engine.sh --check' "$1"
+      ;;
+    *) printf 'the harness could not ask the provider. Start the engine again: local/engine.sh' ;;
+  esac
 }

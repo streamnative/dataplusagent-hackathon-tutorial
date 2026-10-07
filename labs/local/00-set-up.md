@@ -92,9 +92,9 @@ engine needs, usually 8080: see [Troubleshooting](troubleshooting.md).
 
 ### Check
 
-The engine is up, has a provider key, and can reach the MCP server. The script
-ends with these lines, and `--check` prints them again without starting
-anything.
+The engine is up, has a provider key that the model provider accepts, and can
+reach the MCP server. The script ends with these lines, and `--check` prints
+them again without starting anything.
 
 ```bash
 local/engine.sh --check
@@ -103,11 +103,16 @@ local/engine.sh --check
 ```text
 PASS  the AI Gateway is running
 PASS  the gateway has a provider key
+PASS  the model provider accepts that key
 PASS  the gateway allows the MCP host risingwave-mcp
 PASS  the MCP server answers at http://risingwave-mcp:8000/mcp on the engine's network
 
 The Agent Engine is up and can reach your MCP server.
 ```
+
+A line that says `FAIL` prints its fix under it. While the third line fails,
+your agent cannot answer. Usually the provider refused the key you exported:
+export one that works and run `local/engine.sh` again.
 
 ## Step 3: Write your `.env`
 

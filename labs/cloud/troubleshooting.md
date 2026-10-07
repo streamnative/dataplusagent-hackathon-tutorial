@@ -13,6 +13,7 @@ Still stuck after two tries? Raise your hand.
 
 | Symptom | Fix |
 |---|---|
+| `pip install -r requirements.txt`: `No matching distribution found for runorca==0.3.0` | The `python3` that made your virtual environment is older than the course needs: on macOS, Apple's own is 3.9. Install Python 3.11 or newer, then make the environment again with it. In `python/`: `rm -rf .venv`, then the install commands from Lab 0 with that Python's name in place of `python3`, for example `python3.13 -m venv .venv`. |
 | Doctor: `Agent Engine HTTP 401/403` | The key was rejected. A key created before its permissions must be re-created: ask a facilitator. |
 | Doctor: `Kafka ... authentication` | `SN_SERVICE_ACCOUNT` must be the full principal, `<name>@<org>.auth.streamnative.cloud`; `SN_API_KEY` is the raw key. |
 | Doctor: `Kafka   security.login_events: not found` | The topic is not there yet. Create it and load it: Lab 0, step 3. |

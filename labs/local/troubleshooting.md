@@ -3,7 +3,7 @@
 Two commands tell you what is wrong. Run both first.
 
 ```bash
-local/engine.sh --check                    # the Agent Engine, and its link to the MCP server
+local/engine.sh --check                    # the Agent Engine, its provider key, and its link to the MCP server
 (cd python && .venv/bin/python doctor.py)  # or: npm --prefix typescript run doctor
 ```
 
@@ -15,7 +15,9 @@ Each failed line prints its fix.
 |---|---|
 | `docker compose ... up` fails with a port already in use | Another program has one of the ports the stack publishes on `127.0.0.1`: 29092 (Kafka), 18081 (schema registry), 4566 and 5691 (RisingWave), 8000 (MCP). Stop that program, run `local/down.sh`, then run the `up` command again. Running it again without `local/down.sh` is not enough: Docker brings the container whose port was taken back without its network. The ports are fixed: the broker tells its clients to come back to `127.0.0.1:29092`, and `local/write-env.sh` writes these ports into `.env`. |
 | `local/engine.sh` fails because a port is taken (`Bind for 0.0.0.0:8080 failed: port is already allocated`) | Another program has a port the engine publishes on `127.0.0.1`: 8080 (the registry) or 18082. If it is a container, `docker ps` shows which: look for `:8080->` under PORTS. Stop that program and run `local/engine.sh` again. If the port is 8080 and you want to keep that program running, move the registry instead: `export ORCA_LOCAL_REGISTRY_PORT=18080`, run `local/engine.sh` again, then `local/write-env.sh` so `.env` has the new address. Export it in every terminal you run `local/engine.sh` from: a run without it goes back to 8080. |
+| `pip install -r requirements.txt`: `No matching distribution found for runorca==0.3.0` | The `python3` that made your virtual environment is older than the course needs: on macOS, Apple's own is 3.9. Install Python 3.11 or newer, then make the environment again with it. In `python/`: `rm -rf .venv`, then the install command from Lab 0 with that Python's name in place of `python3`, for example `python3.13 -m venv .venv`. |
 | `local/engine.sh`: `ANTHROPIC_API_KEY is not set in this shell` | `export ANTHROPIC_API_KEY=<your key>` in the terminal where you run the script. The engine reads the key only when it starts. |
+| `local/engine.sh`: `FAIL  the model provider accepts that key` | The fix under that line says why. `the provider answered 401` (or `403`): the provider refuses the key the engine started with. `export ANTHROPIC_API_KEY=<a key that works>`, then `local/engine.sh`. `the engine cannot reach https://api.anthropic.com`: the engine has no way out to the provider. Check your network, then `local/engine.sh --check`. |
 | `local/engine.sh`: `bootstrap refused: an organization already exists` | The engine's volumes exist but its keys in `.lab/ork` are gone. Start over: `local/down.sh --reset`, then Lab 0. |
 | CLI path: `.venv/bin/python: No such file or directory` | The Python path is not installed. If you installed the TypeScript path, use the `npm` command the lab gives beside the Python one. Otherwise install one of the two: Lab 0, "Before you start". |
 | Doctor: `Agent Engine HTTP 401` | The key in `.env` is not the running engine's key. Run `local/write-env.sh`. If it still fails, the engine's volumes and keys are out of step: `local/down.sh --reset`, then Lab 0. |
@@ -52,9 +54,11 @@ You do not have to wait for it: press Ctrl-C. That stops your script, not the
 engine. The engine keeps retrying that turn for the rest of the three minutes,
 and a turn you start meanwhile waits behind it. The usual cause is the key:
 
-1. Check that the key works at all, for example in the
-   [Anthropic console](https://console.anthropic.com/).
-2. Export the working key and restart the engine, which reads the key only at
+1. Ask the provider about it: `local/engine.sh --check`. If
+   `the model provider accepts that key` says `FAIL`, the fix under it says
+   why. Most often the provider refuses the key the engine started with, for
+   example one that was revoked since Lab 0.
+2. Export a key that works and restart the engine, which reads the key only at
    start:
 
    ```bash
@@ -64,8 +68,8 @@ and a turn you start meanwhile waits behind it. The usual cause is the key:
 
 3. Run the lab script again.
 
-If the key is fine, check that `ORCA_MODEL` in `.env` is a model your key can
-use.
+If that line says `PASS`, the key is fine: check that `ORCA_MODEL` in `.env` is
+a model your key can use.
 
 ## Start over
 

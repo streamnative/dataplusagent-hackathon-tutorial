@@ -29,9 +29,14 @@ if [ -n "$mcp" ]; then
 fi
 
 # The engine. `down` by project name also removes the gateway, and needs no file.
+# Without --reset, `rm --volumes` goes first: `down` alone keeps the unnamed
+# volumes that some images declare, and the next start makes new ones beside
+# them. Your data is in named volumes, which `rm --volumes` does not touch. It
+# is quiet and may fail: `down` stops whatever it left.
 if $reset; then
   docker compose --progress quiet --project-name "$project" down -v --remove-orphans
 else
+  docker compose --progress quiet --project-name "$project" rm --stop --force --volumes >/dev/null 2>&1 || true
   docker compose --progress quiet --project-name "$project" down --remove-orphans
 fi
 
@@ -39,6 +44,7 @@ fi
 if $reset; then
   streaming down -v --remove-orphans
 else
+  streaming rm --stop --force --volumes >/dev/null 2>&1 || true
   streaming down --remove-orphans
 fi
 

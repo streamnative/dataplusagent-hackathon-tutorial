@@ -4,7 +4,7 @@
 #
 #   export ANTHROPIC_API_KEY=...   # the engine reads your provider key when it starts
 #   local/engine.sh                # start (or restart) the engine, then link it
-#   local/engine.sh --check        # only check the link
+#   local/engine.sh --check        # only run the checks
 #
 # What it runs, in order:
 #
@@ -20,6 +20,10 @@
 #      So this script adds one host (risingwave-mcp) to .lab/ork/gateway.yaml,
 #      restarts the gateway, and attaches the MCP server's container to the
 #      engine's Docker network under that name.
+#
+#   3. The checks, which `--check` runs alone. One of them asks the model
+#      provider whether it accepts your key. The harness makes that request, so
+#      the key stays in the engine; it lists models, which costs nothing.
 #
 # Safe to run again at any time. Run it again after anything restarts the engine.
 set -euo pipefail
@@ -38,6 +42,22 @@ curl_on() {  # curl_on <network> <curl args...>
   docker run --rm --network "$1" --entrypoint curl "$CURL_IMAGE" "${@:2}"
 }
 
+# Ask the model provider about the engine's key: the HTTP status of a request
+# that lists models, or "unreachable". `ork local start` hands the harness and
+# the gateway the same key, and of the two images only the harness's has an HTTP
+# client (node), so the harness asks.
+provider_status() {
+  local harness
+  harness=$(engine_container harness)
+  [ -n "$harness" ] || return 0
+  docker exec -e PROVIDER_URL="$PROVIDER_URL" "$harness" node -e '
+    fetch(process.env.PROVIDER_URL + "/v1/models?limit=1", {
+      headers: { "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      signal: AbortSignal.timeout(15000),
+    }).then((response) => console.log(response.status), () => console.log("unreachable"));
+  ' 2>/dev/null || true
+}
+
 start_engine() {
   command -v ork >/dev/null || die "ork (the Orca CLI) is not installed. See labs/local/00-set-up.md."
   [ -n "${ANTHROPIC_API_KEY:-}" ] ||
@@ -49,10 +69,12 @@ start_engine() {
   # Replace what is not running. A container whose port could not be bound
   # (another program had it) stays cut off from its network: Docker starts it
   # with loopback only from then on, even once the port is free (seen with
-  # Docker Engine 29.2). The engine's data is in volumes, so nothing is lost.
+  # Docker Engine 29.2). The engine's data is in named volumes, so nothing is
+  # lost: `--volumes` takes only the unnamed ones an image declares, which would
+  # otherwise be left behind at every start.
   local name
   while IFS= read -r name; do
-    [ -z "$name" ] || docker rm "$name" >/dev/null
+    [ -z "$name" ] || docker rm --volumes "$name" >/dev/null
   done < <(engine_stopped_containers)
   ork local --data-dir "$ORK_DIR" start --with-gateway
 }
@@ -82,7 +104,7 @@ link() {
 }
 
 check() {
-  local gateway network mcp
+  local gateway network mcp fix
   gateway=$(engine_container ai-gateway)
   mcp=$(mcp_container)
 
@@ -94,6 +116,14 @@ check() {
 
   if docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$gateway" | grep -q '^ANTHROPIC_API_KEY=.'; then
     pass "the gateway has a provider key"
+    # A key can be there and still be refused. Without this, the first sign is
+    # an agent that retries its first turn for three minutes.
+    fix=$(provider_fix "$(provider_status)")
+    if [ -z "$fix" ]; then
+      pass "the model provider accepts that key"
+    else
+      fail "the model provider accepts that key" "$fix"
+    fi
   else
     fail "the gateway has a provider key" "export ANTHROPIC_API_KEY=<your key>, then local/engine.sh"
   fi

@@ -14,7 +14,8 @@ WORK=$(cd "$WORK" && pwd)   # as the scripts see it: a TMPDIR ending in "/" leav
 trap 'rm -rf "$WORK"' EXIT
 
 # A `docker` that knows which host port the registry is published on, which
-# containers exist, and remembers what it was asked.
+# containers exist, what the gateway holds and what the model provider answers,
+# and remembers what it was asked.
 mkdir -p "$WORK/bin"
 cat >"$WORK/bin/docker" <<'EOF'
 #!/usr/bin/env bash
@@ -43,7 +44,22 @@ case "$1" in
     [ -f "$FAKE_DOCKER_DIR/registry-port" ] && echo "127.0.0.1:$(cat "$FAKE_DOCKER_DIR/registry-port")"
     ;;
   rm) [ $# -ge 2 ] || exit 1 ;;   # like docker, it wants at least one container
-  compose) ;;
+  inspect)
+    # The gateway's environment, or the network it is on, whichever is asked for.
+    case "$*" in
+      *.Config.Env*) cat "$FAKE_DOCKER_DIR/gateway-env" ;;
+      *) echo ork-local_default ;;
+    esac
+    ;;
+  exec) cat "$FAKE_DOCKER_DIR/provider-status" 2>/dev/null ;;   # the harness asks the provider
+  run) ;;   # curl on the engine's network: the MCP server answers
+  compose)
+    # `rm` can be made to fail, noisily: stopping must not depend on it.
+    if [[ " $* " == *" rm "* && -f "$FAKE_DOCKER_DIR/compose-rm-fails" ]]; then
+      echo "No stopped containers" >&2
+      exit 1
+    fi
+    ;;
   *) exit 1 ;;
 esac
 EOF
@@ -216,6 +232,7 @@ test_engine_replaces_its_containers_that_are_not_running() {
   start_engine
   check "removes a container that never started, before the engine starts" removed_before_the_start ork-registry-1
   check "removes a container that has stopped, before the engine starts" removed_before_the_start ork-migrate-1
+  check "takes each one's unnamed volumes with it" grep -qx -- "rm --volumes ork-migrate-1" "$FAKE_DOCKER_DIR/calls"
   check "leaves a running container alone" not removed ork-harness-1
   check "leaves other projects' containers alone" not removed someone-elses-container
   check "then starts the engine" started
@@ -228,6 +245,128 @@ test_engine_starts_when_nothing_has_stopped() {
   start_engine
   check "asks docker to remove nothing" not grep -q '^rm' "$FAKE_DOCKER_DIR/calls"
   check "and starts the engine" started
+}
+
+# ------------------------------------------------------------------ stopping --
+
+asked() { grep -qE -- "$1" "$FAKE_DOCKER_DIR/calls"; }   # asked <regex>: docker was asked this
+
+test_stopping_keeps_your_data_and_leaves_no_unnamed_volumes() {
+  # `down` alone keeps the unnamed volumes some images declare. Every stop and
+  # start left four more behind.
+  fresh_repo down
+  engine_started
+  run down.sh
+  check "stopping succeeds" [ "$STATUS" -eq 0 ]
+  check "the engine's containers go with their unnamed volumes" \
+    asked '^compose .*--project-name ork-local-[0-9a-f]{8} rm --stop --force --volumes$'
+  check "so do the streaming stack's" \
+    asked '^compose .*--project-name hello-data-agent .*rm --stop --force --volumes$'
+  check "both stacks are brought down" [ "$(grep -cE '^compose .* down --remove-orphans$' "$FAKE_DOCKER_DIR/calls")" -eq 2 ]
+  check "no named volume is deleted" not asked ' down -v'
+  check "says your data is kept" out_has "Your data is kept"
+}
+
+test_stopping_does_not_depend_on_removing_unnamed_volumes() {
+  fresh_repo down-rm-fails
+  engine_started
+  touch "$FAKE_DOCKER_DIR/compose-rm-fails"
+  run down.sh
+  check "stopping succeeds when that step fails" [ "$STATUS" -eq 0 ]
+  check "both stacks are still brought down" [ "$(grep -cE '^compose .* down --remove-orphans$' "$FAKE_DOCKER_DIR/calls")" -eq 2 ]
+  check "and that step's messages are not shown" [ ! -s "$R/err" ]
+}
+
+test_reset_deletes_the_volumes_with_the_stacks() {
+  fresh_repo down-reset
+  engine_started
+  printf 'TUTORIAL_STACK=local\n' >"$R/.env"
+  run down.sh --reset
+  check "reset succeeds" [ "$STATUS" -eq 0 ]
+  check "the engine's volumes are deleted" asked '^compose .*--project-name ork-local-[0-9a-f]{8} down -v --remove-orphans$'
+  check "the streaming stack's too" asked '^compose .*--project-name hello-data-agent .*down -v --remove-orphans$'
+  check "the engine's keys go with its volumes" [ ! -e "$R/.lab/ork" ]
+  check "and the local .env" [ ! -e "$R/.env" ]
+}
+
+# ------------------------------------------------------ checking the engine --
+
+PROVIDER_KEY=sk-ant-test-key-0123456789
+
+engine_running() {  # an engine that is up and linked, and holds a provider key
+  engine_started
+  printf 'PATH=/usr/bin\nANTHROPIC_API_KEY=%s\n' "$PROVIDER_KEY" >"$FAKE_DOCKER_DIR/gateway-env"
+  printf "        allowed_private_hosts: ['risingwave-mcp']\n" >"$R/.lab/ork/gateway.yaml"
+}
+
+provider_answers() {  # what the harness hears back when it asks about the key
+  printf '%s\n' "$1" >"$FAKE_DOCKER_DIR/provider-status"
+}
+
+test_check_passes_when_the_provider_accepts_the_key() {
+  fresh_repo provider-accepts
+  engine_running
+  provider_answers 200
+  run engine.sh --check
+  check "the check succeeds" [ "$STATUS" -eq 0 ]
+  check "says the provider accepts the key" out_has "PASS  the model provider accepts that key"
+  check "and that the engine is up" out_has "The Agent Engine is up"
+  check "the key is on no command line" not grep -qF "$PROVIDER_KEY" "$FAKE_DOCKER_DIR/calls"
+  check "and in nothing the script prints" not grep -qF "$PROVIDER_KEY" "$R/out" "$R/err"
+}
+
+test_check_fails_when_the_provider_refuses_the_key() {
+  # Before this check, a refused key first showed in Lab 1, as three minutes of retries.
+  fresh_repo provider-refuses
+  engine_running
+  provider_answers 401
+  run engine.sh --check
+  check "exits 1 on a refused key" [ "$STATUS" -eq 1 ]
+  check "names the check that failed" out_has "FAIL  the model provider accepts that key"
+  check "says what the provider answered" out_has "the provider answered 401"
+  check "says how to give the engine another key" out_has "export ANTHROPIC_API_KEY=<a key it accepts>, then local/engine.sh"
+  check "still runs the checks that follow" out_has "PASS  the gateway allows the MCP host risingwave-mcp"
+}
+
+test_check_tells_a_network_problem_from_a_refused_key() {
+  fresh_repo provider-unreachable
+  engine_running
+  provider_answers unreachable
+  run engine.sh --check
+  check "exits 1 when the provider cannot be reached" [ "$STATUS" -eq 1 ]
+  check "blames the network" out_has "the engine cannot reach https://api.anthropic.com"
+  check "does not say to change the key" not out_has "export ANTHROPIC_API_KEY"
+}
+
+test_check_does_not_blame_the_key_for_a_provider_outage() {
+  fresh_repo provider-outage
+  engine_running
+  provider_answers 529
+  run engine.sh --check
+  check "exits 1 while the provider is failing" [ "$STATUS" -eq 1 ]
+  check "says the answer is not about the key" out_has "the provider answered 529, which is not about your key"
+  check "does not say to change the key" not out_has "export ANTHROPIC_API_KEY"
+}
+
+test_check_says_so_when_the_harness_cannot_ask() {
+  fresh_repo provider-not-asked
+  engine_running   # and no answer: `docker exec` fails, as on a harness that is down
+  run engine.sh --check
+  check "exits 1 when nothing could ask" [ "$STATUS" -eq 1 ]
+  check "names the check that failed" out_has "FAIL  the model provider accepts that key"
+  check "says that nothing could ask" out_has "the harness could not ask the provider"
+  check "and to start the engine again" out_has "Start the engine again: local/engine.sh"
+}
+
+test_check_asks_the_provider_nothing_without_a_key() {
+  fresh_repo provider-no-key
+  engine_running
+  printf 'PATH=/usr/bin\nANTHROPIC_API_KEY=\n' >"$FAKE_DOCKER_DIR/gateway-env"
+  provider_answers 401
+  run engine.sh --check
+  check "fails on the missing key" out_has "FAIL  the gateway has a provider key"
+  check "prints one failure for it, not two" not out_has "the model provider accepts that key"
+  check "and makes no request" not grep -q '^exec ' "$FAKE_DOCKER_DIR/calls"
 }
 
 # ------------------------------------------------------- the gateway patch --

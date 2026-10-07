@@ -16,8 +16,10 @@ Everyone also needs:
 - `git` and a terminal that runs `bash`. On Windows that is WSL or Git Bash, on
   every path: the checks in the labs are `bash` commands.
 - [`ork`](https://github.com/orca-ae/orca-cli) (the Orca CLI), v0.6.0 or newer:
-  `brew install orca-ae/tap/ork`. All three paths use it for the first MCP login
-  in Lab 3, and for the checks in every lab. Check
+  `brew install orca-ae/tap/ork`, or a
+  [release archive](https://github.com/orca-ae/orca-cli/releases) unpacked onto
+  your `PATH`. All three paths use it for the first MCP login in Lab 3, and for
+  the checks in every lab. Check
   `ork agent vaults credentials create --help` for `--oauth-issuer` and
   `--oauth-allow-issuer-mismatch`: a build with those flags handles
   StreamNative's same-domain proxy issuer aliases and dynamic client

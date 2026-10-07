@@ -10,7 +10,9 @@ part of the stack answers and the topic holds 246 logins.
 
 - **Docker** is running, with Compose v2 (`docker compose version`).
 - You have [`ork`](https://github.com/orca-ae/orca-cli) v0.6.0 or newer
-  (`brew install orca-ae/tap/ork`), and [`jq`](https://jqlang.org/download/).
+  (`brew install orca-ae/tap/ork`, or a
+  [release archive](https://github.com/orca-ae/orca-cli/releases) unpacked onto
+  your `PATH`), and [`jq`](https://jqlang.org/download/).
 - You have an **Anthropic API key**.
 - You cloned this repository, and installed **one** path:
 

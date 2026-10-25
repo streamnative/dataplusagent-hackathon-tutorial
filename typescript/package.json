@@ -30,6 +30,6 @@
     "@types/node": "20.19.43",
     "avsc": "5.7.9",
     "typescript": "5.9.3",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   }
 }
